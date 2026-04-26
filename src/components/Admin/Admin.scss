@@ -4,6 +4,86 @@
     font-size: 24px;
     margin-top: 20px;
   }
+  .media-settings {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin: 20px 0;
+
+    h2 {
+      width: 100%;
+      margin: 0;
+      font-size: 20px;
+      font-weight: 500;
+    }
+
+    .setting-toggle {
+      display: grid;
+      grid-template-columns: minmax(150px, max-content) 52px minmax(110px, max-content);
+      align-items: center;
+      gap: 10px;
+      min-height: 36px;
+
+      &.disabled {
+        opacity: 0.55;
+      }
+    }
+
+    .setting-toggle-label {
+      font-weight: 500;
+    }
+
+    .setting-toggle-value {
+      color: #345;
+      font-size: 14px;
+    }
+
+    .toggle-switch {
+      all: unset;
+      box-sizing: border-box;
+      width: 52px;
+      height: 28px;
+      border-radius: 999px;
+      background: #b8c4ca;
+      cursor: pointer;
+      position: relative;
+      transition:
+        background-color 0.2s ease,
+        box-shadow 0.2s ease;
+      box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+
+      &:focus-visible {
+        box-shadow:
+          inset 0 0 0 1px rgba(0, 0, 0, 0.12),
+          0 0 0 3px rgba(106, 188, 219, 0.4);
+      }
+
+      &:disabled {
+        cursor: not-allowed;
+      }
+
+      &.on {
+        background: #4f9f74;
+
+        .toggle-thumb {
+          transform: translateX(24px);
+        }
+      }
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 4px;
+      left: 4px;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+      transition: transform 0.2s ease;
+    }
+  }
   table {
     margin: 20px 0;
   }

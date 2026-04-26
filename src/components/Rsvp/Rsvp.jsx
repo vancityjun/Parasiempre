@@ -7,8 +7,8 @@ import { useMemo } from "react";
 import "./Rsvp.scss";
 import RsvpConfirmation from "../RsvpConfirmation";
 import questionnaireFlow from "./questionnaireFlow.json";
-import { getFunctions, httpsCallable } from "firebase/functions";
-import { app } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../firebase";
 
 const submitStatus = {
   none: "none",
@@ -19,7 +19,7 @@ const submitStatus = {
 const Rsvp = () => {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
-  const [submitEnabled, setSubmitEnabled] = useState(false);
+  const [, setSubmitEnabled] = useState(false);
   const [email, setEmail] = useState("");
   const [guestCount, setGuestCount] = useState(0);
   const [submitState, setSubmitState] = useState(submitStatus);
@@ -41,11 +41,9 @@ const Rsvp = () => {
     return Boolean(firstName && lastName) && validateEmail();
   };
 
-  const functions = getFunctions(app);
   const addRSVP = httpsCallable(functions, "addRSVP");
 
   const onClickSend = async () => {
-    setSubmitEnabled(false);
     if (validateFields()) {
       setSubmitState(submitStatus.submitting);
       setSubmissionError(null);

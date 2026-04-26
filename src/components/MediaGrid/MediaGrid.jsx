@@ -1,16 +1,17 @@
 import { useState, useEffect } from "react";
-import { app } from "../../firebase";
-import { getFunctions, httpsCallable } from "firebase/functions";
+import { functions } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
 import "./MediaGrid.scss";
 import Button from "../Button";
 import { useNavigate } from "react-router";
 import { useAuth } from "../../contexts/AuthContext";
 import FullScreenMediaModal from "../FullScreenMediaModal/FullScreenMediaModal"; // Corrected import path
 
-const functions = getFunctions(app);
 const listMediaPaginated = httpsCallable(functions, "listMediaPaginated");
 const deleteMediaItemCallable = httpsCallable(functions, "deleteMediaItem");
+const getMediaSettings = httpsCallable(functions, "getMediaSettings");
 const ITEMS_PER_LOAD = 9;
+const NATIVE_SAVE_BLOCKED = "blocked";
 
 const MediaGridDisplay = ({
   isLoading,
@@ -23,6 +24,7 @@ const MediaGridDisplay = ({
   currentUser,
   onDelete,
   onMediaClick,
+  nativeSaveBlocked,
 }) => {
   if (isLoading && mediaItems.length === 0) {
     return <div className="status-message loading">Loading media...</div>;
@@ -40,8 +42,13 @@ const MediaGridDisplay = ({
         {mediaItems.map((item) => (
           <div
             key={item.fullName || item.name}
-            className="media-item"
+            className={`media-item ${
+              nativeSaveBlocked ? "prevent-save" : ""
+            }`}
             onClick={() => onMediaClick(item)}
+            onContextMenu={(e) => {
+              if (nativeSaveBlocked) e.preventDefault();
+            }}
           >
             {isVideo(item.name) ? (
               <video
@@ -52,14 +59,18 @@ const MediaGridDisplay = ({
                 playsInline
                 draggable="false"
                 alt={`Video ${item.name}`}
-                title="Press and hold to download"
+                title={
+                  nativeSaveBlocked ? undefined : "Press and hold to download"
+                }
               />
             ) : (
               <img
                 src={item.url}
                 alt={`Photo ${item.name}`}
                 draggable="false"
-                title="Press and hold to download"
+                title={
+                  nativeSaveBlocked ? undefined : "Press and hold to download"
+                }
               />
             )}
             {currentUser && (
@@ -103,6 +114,7 @@ const MediaGrid = ({ refreshKey }) => {
   const { currentUser } = useAuth();
   const [currentModalIndex, setCurrentModalIndex] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [nativeSaveBlocked, setNativeSaveBlocked] = useState(true);
 
   useEffect(() => {
     setMediaItems([]);
@@ -110,6 +122,21 @@ const MediaGrid = ({ refreshKey }) => {
     setAllMediaLoaded(false);
     fetchMediaItems(true); // true for initial load
   }, [refreshKey]);
+
+  useEffect(() => {
+    const fetchMediaSettings = async () => {
+      try {
+        const result = await getMediaSettings();
+        setNativeSaveBlocked(
+          result.data.nativeSaveMode === NATIVE_SAVE_BLOCKED,
+        );
+      } catch (err) {
+        console.error("Error fetching media settings:", err);
+      }
+    };
+
+    fetchMediaSettings();
+  }, []);
 
   const fetchMediaItems = async (
     isInitialLoad = false,
@@ -217,10 +244,13 @@ const MediaGrid = ({ refreshKey }) => {
         currentUser={currentUser}
         onDelete={handleDeleteMedia}
         onMediaClick={handleMediaClick}
+        nativeSaveBlocked={nativeSaveBlocked}
       />
-      <p className="media-grid-instruction">
-        Press and hold an image or video to download.
-      </p>
+      {!nativeSaveBlocked && (
+        <p className="media-grid-instruction">
+          Press and hold an image or video to download.
+        </p>
+      )}
       <Button
         title="Share your media"
         onClick={() => {
@@ -236,6 +266,7 @@ const MediaGrid = ({ refreshKey }) => {
           onNext={handleNextMedia}
           onPrev={handlePrevMedia}
           isVideo={isVideo}
+          nativeSaveBlocked={nativeSaveBlocked}
         />
       )}
     </div>

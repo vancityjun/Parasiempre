@@ -59,8 +59,14 @@
         }
       }
 
-      // Overlay to make right-click saving harder
-      &::after {
+      &.prevent-save {
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+
+      // Overlay to make browser-native image saving harder when enabled.
+      &.prevent-save::after {
         content: "";
         position: absolute;
         top: 0;

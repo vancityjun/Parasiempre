@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef } from "react";
 import "./FullScreenMediaModal.scss";
 
 const FullScreenMediaModal = ({
@@ -8,6 +8,7 @@ const FullScreenMediaModal = ({
   onNext,
   onPrev,
   isVideo,
+  nativeSaveBlocked = true,
 }) => {
   const [touchStartX, setTouchStartX] = useState(0);
   const contentRef = useRef(null);
@@ -63,7 +64,13 @@ const FullScreenMediaModal = ({
   };
 
   return (
-    <div className="fullscreen-modal-overlay" onClick={handleOverlayClick}>
+    <div
+      className="fullscreen-modal-overlay"
+      onClick={handleOverlayClick}
+      onContextMenu={(e) => {
+        if (nativeSaveBlocked) e.preventDefault();
+      }}
+    >
       <button className="close-modal-btn" onClick={onClose} title="Close">
         &times;
       </button>
@@ -84,18 +91,24 @@ const FullScreenMediaModal = ({
           <video
             src={currentMedia.url}
             controls
+            controlsList={nativeSaveBlocked ? "nodownload" : undefined}
             autoPlay
             playsInline
             loop
             alt={`Video ${currentMedia.name}`}
+            draggable="false"
             key={currentMedia.url}
           />
         ) : (
           <img
             src={currentMedia.url}
             alt={`Photo ${currentMedia.name}`}
+            draggable="false"
             key={currentMedia.url}
           />
+        )}
+        {nativeSaveBlocked && !isVideo(currentMedia.name) && (
+          <div className="fullscreen-save-blocker" />
         )}
       </div>
 
