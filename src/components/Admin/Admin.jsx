@@ -154,7 +154,7 @@ const Admin = () => {
                   <td>{guestCount}</td>
                   <td>
                     <ul>
-                      {Object.entries(questionnaireAnswers).map(
+                      {Object.entries(questionnaireAnswers || {}).map(
                         ([key, answer]) => (
                           <li key={key}>
                             {key}: <b>{answer}</b>
