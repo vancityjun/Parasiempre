@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { useState } from "react";
 import Button from "../Button";
 import PanelHeading from "./PanelHeading";
 
@@ -46,7 +46,7 @@ const GuestRow = ({
   const answers = Object.entries(questionnaireAnswers || {});
 
   return (
-    <Fragment>
+    <>
       <tr>
         <td data-label="Guest">
           <div className="guest-name-cell">
@@ -93,7 +93,7 @@ const GuestRow = ({
         </td>
       </tr>
       {expanded && answers.length > 0 && <AnswersDetail answers={answers} />}
-    </Fragment>
+    </>
   );
 };
 
