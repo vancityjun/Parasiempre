@@ -176,12 +176,23 @@ const getDerivativeFolder = (fullName) =>
 const getDerivativePath = (fullName, width) =>
   `${getDerivativeFolder(fullName)}${width}.webp`;
 
+const getFirebaseStorageDownloadUrl = (file) =>
+  `https://firebasestorage.googleapis.com/v0/b/${file.bucket.name}/o/${encodeURIComponent(file.name)}?alt=media`;
+
 const getSignedReadUrl = async (file) => {
-  const [url] = await file.getSignedUrl({
-    action: "read",
-    expires: Date.now() + SIGNED_URL_TTL_MS,
-  });
-  return url;
+  try {
+    const [url] = await file.getSignedUrl({
+      action: "read",
+      expires: Date.now() + SIGNED_URL_TTL_MS,
+    });
+    return url;
+  } catch (error) {
+    if (!isFunctionsEmulator() || error?.name !== "SigningError") {
+      throw error;
+    }
+
+    return getFirebaseStorageDownloadUrl(file);
+  }
 };
 
 const generateImageVariants = async (bucket, originalFile, contentType) => {
@@ -712,6 +723,7 @@ exports.deleteMediaItem = onCall(async (request) => {
 
 exports.generateMediaImageVariants = onObjectFinalized(
   {
+    region: "us-west1",
     memory: "1GiB",
     timeoutSeconds: 300,
   },
@@ -734,42 +746,5 @@ exports.generateMediaImageVariants = onObjectFinalized(
       generated: result.generated,
     });
     return result;
-  },
-);
-
-exports.backfillMediaImageVariants = onCall(
-  {
-    memory: "1GiB",
-    timeoutSeconds: 540,
-  },
-  async (request) => {
-    assertMediaAdmin(request);
-
-    const bucket = getStorage().bucket();
-    const [files] = await bucket.getFiles({
-      prefix: PHOTOS_PREFIX,
-      autoPaginate: true,
-    });
-    const photoFiles = files.filter((file) => isOriginalPhotoPath(file.name));
-    const results = [];
-
-    for (const file of photoFiles) {
-      const [metadata] = await file.getMetadata();
-      const result = await generateImageVariants(
-        bucket,
-        file,
-        metadata.contentType || "",
-      );
-      results.push({ fullName: file.name, ...result });
-    }
-
-    return {
-      processed: results.length,
-      generated: results.reduce(
-        (total, result) => total + result.generated.length,
-        0,
-      ),
-      skipped: results.filter((result) => result.skipped).length,
-    };
   },
 );

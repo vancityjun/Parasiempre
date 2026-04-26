@@ -7,6 +7,11 @@ service firebase.storage {
       allow write: if false;
     }
 
+    match /photos_resized/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }
