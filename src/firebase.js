@@ -1,8 +1,8 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
-import { getFirestore } from "firebase/firestore";
+import { connectFirestoreEmulator, getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
+import { connectFunctionsEmulator, getFunctions } from "firebase/functions";
 
 // TODO: Add SDKs for Firebase products that you want to use
 // https://firebase.google.com/docs/web/setup#available-libraries
@@ -25,8 +25,34 @@ const firebaseConfig = {
 
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig);
-// eslint-disable-next-line no-unused-vars
-const analytics = getAnalytics(app);
+
+if (import.meta.env.PROD) {
+  import("firebase/analytics")
+    .then(({ getAnalytics, isSupported }) =>
+      isSupported().then((supported) => {
+        if (supported) getAnalytics(app);
+      }),
+    )
+    .catch((error) => {
+      console.warn("Firebase Analytics is unavailable:", error);
+    });
+}
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
+export const functions = getFunctions(app);
+
+if (
+  import.meta.env.DEV &&
+  import.meta.env.VITE_USE_FIRESTORE_EMULATOR === "true"
+) {
+  connectFirestoreEmulator(db, "localhost", 8080);
+}
+
+if (
+  import.meta.env.DEV &&
+  (import.meta.env.VITE_USE_FIREBASE_EMULATORS === "true" ||
+    import.meta.env.VITE_USE_FUNCTIONS_EMULATOR === "true")
+) {
+  connectFunctionsEmulator(functions, "localhost", 5001);
+}

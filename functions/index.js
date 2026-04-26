@@ -6,12 +6,144 @@ const { onDocumentCreated } = require("firebase-functions/v2/firestore");
 const Mailgun = require("mailgun.js").default;
 const FormData = require("form-data");
 const { getStorage } = require("firebase-admin/storage");
+const crypto = require("crypto");
 // const { MAILGUN_API_KEY } = process.env;
 const COLLECTION = "rsvps";
+const MEDIA_SETTINGS_COLLECTION = "settings";
+const MEDIA_SETTINGS_DOC = "media";
+const MEDIA_UPLOAD_MODES = {
+  PUBLIC: "public",
+  ATTENDEES_ONLY: "attendeesOnly",
+};
+const NATIVE_SAVE_MODES = {
+  BLOCKED: "blocked",
+  ALLOWED: "allowed",
+};
+const DEFAULT_MEDIA_SETTINGS = {
+  uploadMode: MEDIA_UPLOAD_MODES.PUBLIC,
+  nativeSaveMode: NATIVE_SAVE_MODES.BLOCKED,
+};
+const MEDIA_PERMISSION_MESSAGE =
+  "You don't have permission to upload image. Please contact admin: vancityjun@gmail.com";
+const PHOTOS_PREFIX = "photos/";
+const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
+const MAX_UPLOAD_URLS_PER_REQUEST = 30;
+const DEFAULT_ADMIN_EMAILS = ["vancityjun@gmail.com"];
 
 initializeApp();
 const db = getFirestore();
 const rsvpCollection = db.collection(COLLECTION);
+const mediaSettingsDoc = db
+  .collection(MEDIA_SETTINGS_COLLECTION)
+  .doc(MEDIA_SETTINGS_DOC);
+let localMediaSettings = { ...DEFAULT_MEDIA_SETTINGS };
+
+const normalizeEmail = (email = "") => email.trim().toLowerCase();
+
+const MEDIA_ADMIN_EMAILS = (
+  process.env.MEDIA_ADMIN_EMAILS ||
+  process.env.ADMIN_EMAILS ||
+  DEFAULT_ADMIN_EMAILS.join(",")
+)
+  .split(",")
+  .map((email) => normalizeEmail(email))
+  .filter(Boolean);
+
+const isFunctionsEmulator = () =>
+  process.env.FUNCTIONS_EMULATOR === "true" ||
+  Boolean(process.env.FIREBASE_EMULATOR_HUB);
+
+const canUseLocalSettingsFallback = (error) =>
+  isFunctionsEmulator() &&
+  (error?.details?.includes("invalid_grant") ||
+    error?.message?.includes("invalid_grant") ||
+    error?.code === 2);
+
+const getMediaSettings = async () => {
+  let data = {};
+
+  try {
+    const snapshot = await mediaSettingsDoc.get();
+    data = snapshot.exists ? snapshot.data() : {};
+  } catch (error) {
+    if (!canUseLocalSettingsFallback(error)) throw error;
+    console.warn(
+      "Using in-memory media settings because Firestore is unavailable in the Functions emulator.",
+      error.message,
+    );
+    data = localMediaSettings;
+  }
+
+  const uploadMode = Object.values(MEDIA_UPLOAD_MODES).includes(data.uploadMode)
+    ? data.uploadMode
+    : DEFAULT_MEDIA_SETTINGS.uploadMode;
+  const nativeSaveMode = Object.values(NATIVE_SAVE_MODES).includes(
+    data.nativeSaveMode,
+  )
+    ? data.nativeSaveMode
+    : DEFAULT_MEDIA_SETTINGS.nativeSaveMode;
+
+  return { uploadMode, nativeSaveMode };
+};
+
+const saveMediaSettings = async (settings) => {
+  try {
+    await mediaSettingsDoc.set(settings, { merge: true });
+  } catch (error) {
+    if (!canUseLocalSettingsFallback(error)) throw error;
+    localMediaSettings = { ...localMediaSettings, ...settings };
+    console.warn(
+      "Using in-memory media settings because Firestore is unavailable in the Functions emulator.",
+      error.message,
+    );
+  }
+};
+
+const assertMediaAdmin = (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "The function must be called while authenticated.",
+    );
+  }
+
+  const normalizedAuthEmail = normalizeEmail(request.auth.token.email);
+  const hasAdminClaim = request.auth.token.admin === true;
+  const isAllowedAdminEmail = MEDIA_ADMIN_EMAILS.includes(normalizedAuthEmail);
+
+  if (!hasAdminClaim && !isAllowedAdminEmail) {
+    throw new HttpsError(
+      "permission-denied",
+      "The function must be called by an admin user.",
+    );
+  }
+};
+
+const validateAttendeeUploadPermission = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) {
+    throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
+  }
+
+  const snapshot = await rsvpCollection.get();
+  const attendee = snapshot.docs
+    .map((doc) => doc.data())
+    .find((data) => normalizeEmail(data.email) === normalizedEmail);
+
+  if (!attendee || attendee.shownUp !== true) {
+    throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
+  }
+
+  return normalizedEmail;
+};
+
+const getSafeFileName = (fileName = "media") => {
+  const sanitized = fileName
+    .replace(/[/\\]/g, "-")
+    .replace(/[^a-zA-Z0-9._ -]/g, "")
+    .trim();
+  return sanitized || "media";
+};
 
 exports.addRSVP = onCall(async (request) => {
   const { id, ...data } = request.data;
@@ -23,9 +155,7 @@ exports.addRSVP = onCall(async (request) => {
     }
 
     // Check for duplicate email
-    const querySnapshot = await rsvpCollection
-      .where("email", "==", data.email)
-      .get();
+    const querySnapshot = await rsvpCollection.where("email", "==", data.email).get();
     if (!querySnapshot.empty) {
       throw new HttpsError("already-exists", "Email already exists");
     }
@@ -260,6 +390,88 @@ exports.toggleShowUp = onCall(
   async ({ data: { shownUp, id } }) =>
     await rsvpCollection.doc(id).update({ shownUp }),
 );
+
+exports.getMediaUploadMode = onCall(async () => {
+  const { uploadMode } = await getMediaSettings();
+  return { mode: uploadMode };
+});
+
+exports.getMediaSettings = onCall(async () => await getMediaSettings());
+
+exports.setMediaUploadMode = onCall(async (request) => {
+  assertMediaAdmin(request);
+
+  const { mode } = request.data || {};
+  if (!Object.values(MEDIA_UPLOAD_MODES).includes(mode)) {
+    throw new HttpsError("invalid-argument", "Invalid media upload mode.");
+  }
+
+  await saveMediaSettings({ uploadMode: mode });
+  return { mode };
+});
+
+exports.setNativeSaveMode = onCall(async (request) => {
+  assertMediaAdmin(request);
+
+  const { mode } = request.data || {};
+  if (!Object.values(NATIVE_SAVE_MODES).includes(mode)) {
+    throw new HttpsError("invalid-argument", "Invalid native save mode.");
+  }
+
+  await saveMediaSettings({ nativeSaveMode: mode });
+  return { mode };
+});
+
+exports.createMediaUploadUrls = onCall(async (request) => {
+  const data = request.data || {};
+  const files = Array.isArray(data.files) ? data.files : [];
+  if (files.length === 0 || files.length > MAX_UPLOAD_URLS_PER_REQUEST) {
+    throw new HttpsError("invalid-argument", "Invalid upload file list.");
+  }
+
+  const settings = await getMediaSettings();
+  const normalizedEmail =
+    settings.uploadMode === MEDIA_UPLOAD_MODES.ATTENDEES_ONLY
+      ? await validateAttendeeUploadPermission(data.email)
+      : normalizeEmail(data.email);
+
+  const bucket = getStorage().bucket();
+  const uploads = await Promise.all(
+    files.map(async ({ name, type }) => {
+      const safeName = getSafeFileName(name);
+      const contentType =
+        typeof type === "string" && type.trim()
+          ? type.trim()
+          : "application/octet-stream";
+      const fullName = `${PHOTOS_PREFIX}${Date.now()}-${crypto.randomUUID()}-${
+        safeName
+      }`;
+      const file = bucket.file(fullName);
+      const headers = { "Content-Type": contentType };
+      const extensionHeaders = normalizedEmail
+        ? { "x-goog-meta-uploader-email": normalizedEmail }
+        : undefined;
+
+      const [uploadUrl] = await file.getSignedUrl({
+        action: "write",
+        expires: Date.now() + SIGNED_UPLOAD_TTL_MS,
+        contentType,
+        extensionHeaders,
+      });
+
+      return {
+        name,
+        fullName,
+        uploadUrl,
+        headers: extensionHeaders
+          ? { ...headers, ...extensionHeaders }
+          : headers,
+      };
+    }),
+  );
+
+  return { mode: settings.uploadMode, uploads };
+});
 
 // Trigger for new RSVP creation
 exports.sendConfirmationEmailOnCreate = onDocumentCreated(

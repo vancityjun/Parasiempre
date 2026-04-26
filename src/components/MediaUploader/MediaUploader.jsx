@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from "react";
-import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { app } from "../../firebase";
+import { httpsCallable } from "firebase/functions";
+import { functions } from "../../firebase";
 import Button from "../Button";
 import "./MediaUploader.scss";
 import { useNavigate } from "react-router";
 import InputField from "../Rsvp/InputField";
 
-const storage = getStorage(app);
+const getMediaUploadMode = httpsCallable(functions, "getMediaUploadMode");
+const createMediaUploadUrls = httpsCallable(functions, "createMediaUploadUrls");
+const ATTENDEES_ONLY = "attendeesOnly";
+const PERMISSION_MESSAGE =
+  "You don't have permission to upload image. Please contact admin: vancityjun@gmail.com";
 
 const MediaUploader = ({ onUploadSuccess }) => {
   const fileInputRef = useRef(null);
@@ -15,7 +19,25 @@ const MediaUploader = ({ onUploadSuccess }) => {
   const [error, setError] = useState(null);
   const [uploaderFirstName, setUploaderFirstName] = useState("");
   const [uploaderLastName, setUploaderLastName] = useState("");
+  const [uploaderEmail, setUploaderEmail] = useState("");
+  const [uploadMode, setUploadMode] = useState("public");
+  const [loadingUploadMode, setLoadingUploadMode] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchUploadMode = async () => {
+      try {
+        const result = await getMediaUploadMode();
+        setUploadMode(result.data.mode);
+      } catch (err) {
+        console.error("Failed to load media upload mode:", err);
+      } finally {
+        setLoadingUploadMode(false);
+      }
+    };
+
+    fetchUploadMode();
+  }, []);
 
   const handleFileChange = (event) => {
     const selectedFilesArray = Array.from(event.target.files);
@@ -63,29 +85,45 @@ const MediaUploader = ({ onUploadSuccess }) => {
     setUploading(true);
     setError(null);
     try {
-      const uploadPromises = filesToUpload.map(async (file) => {
-        const storageRef = ref(storage, `photos/${file.name}`);
-        const uploadMetadata = {
-          customMetadata: {
-            uploaderFirstName: uploaderFirstName || "unknown",
-            uploaderLastName: uploaderLastName || "",
-            uploadedAt: new Date().toISOString(),
-          },
-        };
-        await uploadBytes(storageRef, file, uploadMetadata);
-        return getDownloadURL(storageRef);
+      const uploadUrlResult = await createMediaUploadUrls({
+        email: uploaderEmail,
+        uploaderFirstName,
+        uploaderLastName,
+        files: filesToUpload.map((file) => ({
+          name: file.name,
+          type: file.type,
+        })),
       });
-      const urls = await Promise.all(uploadPromises);
-      console.log("Uploaded file URLs:", urls);
+
+      const uploadPromises = uploadUrlResult.data.uploads.map(
+        async ({ uploadUrl, headers }, index) => {
+          const response = await fetch(uploadUrl, {
+            method: "PUT",
+            headers,
+            body: filesToUpload[index],
+          });
+
+          if (!response.ok) {
+            throw new Error(`Failed to upload ${filesToUpload[index].name}`);
+          }
+        },
+      );
+
+      await Promise.all(uploadPromises);
       setFilesToUpload([]);
       if (onUploadSuccess) {
         onUploadSuccess();
       }
       setUploaderFirstName("");
       setUploaderLastName("");
+      setUploaderEmail("");
       navigate("/");
     } catch (err) {
-      setError("Failed to upload photos: " + err.message);
+      if (err.code === "functions/permission-denied") {
+        setError(PERMISSION_MESSAGE);
+      } else {
+        setError("Failed to upload photos: " + err.message);
+      }
     } finally {
       setUploading(false);
     }
@@ -170,24 +208,36 @@ const MediaUploader = ({ onUploadSuccess }) => {
         Help us know who shared these lovely memories!
       </p>
       <div className="uploader-info-form">
+        {uploadMode === ATTENDEES_ONLY && (
+          <InputField
+            type="email"
+            title="Your Email"
+            val={uploaderEmail}
+            setVal={setUploaderEmail}
+            isRequired
+          />
+        )}
         <InputField
           type="text"
           title="Your First Name (Optional)"
-          value={uploaderFirstName}
-          onChange={(e) => setUploaderFirstName(e.target.value)}
-          className="uploader-name-input"
+          val={uploaderFirstName}
+          setVal={setUploaderFirstName}
         />
         <InputField
           type="text"
           title="Your Last Name (Optional)"
-          value={uploaderLastName}
-          onChange={(e) => setUploaderLastName(e.target.value)}
-          className="uploader-name-input"
+          val={uploaderLastName}
+          setVal={setUploaderLastName}
         />
       </div>
       <Button
         onClick={handleUpload}
-        disabled={filesToUpload.length === 0 || uploading}
+        disabled={
+          filesToUpload.length === 0 ||
+          uploading ||
+          loadingUploadMode ||
+          (uploadMode === ATTENDEES_ONLY && !uploaderEmail.trim())
+        }
         title={uploading ? "Uploading..." : "Upload Photos"}
       />
       {error && <p className="error-message">{error}</p>}

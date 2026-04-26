@@ -1,0 +1,12 @@
+[
+  {
+    "origin": [
+      "https://para-siempre.love",
+      "https://www.para-siempre.love",
+      "http://localhost:5173"
+    ],
+    "method": ["PUT", "OPTIONS"],
+    "responseHeader": ["Content-Type", "x-goog-meta-uploader-email"],
+    "maxAgeSeconds": 3600
+  }
+]
