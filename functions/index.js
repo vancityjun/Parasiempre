@@ -226,7 +226,12 @@ const getTargetWidths = (originalWidth) => {
   return matchingWidths.length > 0 ? matchingWidths : [Math.round(originalWidth)];
 };
 
-const generateImageVariants = async (bucket, originalFile, contentType) => {
+const generateImageVariants = async (
+  bucket,
+  originalFile,
+  contentType,
+  existingMetadata = null,
+) => {
   const fullName = originalFile.name;
   if (
     !isOriginalPhotoPath(fullName) ||
@@ -236,16 +241,25 @@ const generateImageVariants = async (bucket, originalFile, contentType) => {
     return { skipped: true, generated: [] };
   }
 
+  const metadataSnapshot =
+    existingMetadata || (await originalFile.getMetadata())[0];
+  const existingWidths = getResponsiveWidthsFromMetadata(
+    metadataSnapshot?.metadata,
+  );
+  if (existingWidths.length > 0) {
+    return { skipped: true, generated: [] };
+  }
+
   const [sourceBuffer] = await originalFile.download();
-  const [existingMetadata] = await originalFile.getMetadata();
   const metadata = await sharp(sourceBuffer).metadata();
   const targetWidths = getTargetWidths(metadata.width);
+  const basePipeline = sharp(sourceBuffer).rotate();
 
   await Promise.all(
     targetWidths.map(async (width) => {
       const derivativeFile = bucket.file(getDerivativePath(fullName, width));
-      const outputBuffer = await sharp(sourceBuffer)
-        .rotate()
+      const outputBuffer = await basePipeline
+        .clone()
         .resize({ width, withoutEnlargement: true })
         .webp({ quality: 78 })
         .toBuffer();
@@ -266,7 +280,7 @@ const generateImageVariants = async (bucket, originalFile, contentType) => {
 
   await saveResponsiveWidthsMetadata(
     originalFile,
-    existingMetadata,
+    metadataSnapshot,
     targetWidths,
   );
 
@@ -795,6 +809,7 @@ exports.generateMediaImageVariants = onObjectFinalized(
       bucket,
       file,
       object.contentType || "",
+      object,
     );
 
     console.log("Image variant generation complete", {
@@ -828,6 +843,7 @@ exports.backfillMediaImageVariants = onCall(
         bucket,
         file,
         metadata.contentType || "",
+        metadata,
       );
       results.push({ fullName: file.name, ...result });
     }
