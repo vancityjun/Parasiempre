@@ -31,9 +31,9 @@ const PHOTOS_PREFIX = "photos/";
 const GENERATED_PHOTOS_PREFIX = "photos_resized/";
 const IMAGE_VARIANT_WIDTHS = [480, 960, 1440];
 const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
-const SIGNED_URL_TTL_MS = 15 * 60 * 1000;
 const MAX_UPLOAD_URLS_PER_REQUEST = 30;
 const DEFAULT_ADMIN_EMAILS = ["vancityjun@gmail.com"];
+const RESPONSIVE_WIDTHS_METADATA_KEY = "responsiveWidths";
 
 initializeApp();
 const db = getFirestore();
@@ -158,8 +158,7 @@ const isVideoFileName = (fileName = "") => {
 const isOriginalPhotoPath = (fileName = "") =>
   fileName.startsWith(PHOTOS_PREFIX) &&
   fileName !== PHOTOS_PREFIX &&
-  !fileName.endsWith("/") &&
-  !fileName.startsWith(GENERATED_PHOTOS_PREFIX);
+  !fileName.endsWith("/");
 
 const isSupportedImage = (contentType = "", fileName = "") => {
   if (contentType === "image/gif") return false;
@@ -176,23 +175,55 @@ const getDerivativeFolder = (fullName) =>
 const getDerivativePath = (fullName, width) =>
   `${getDerivativeFolder(fullName)}${width}.webp`;
 
-const getFirebaseStorageDownloadUrl = (file) =>
+const getPublicReadUrl = (file) =>
   `https://firebasestorage.googleapis.com/v0/b/${file.bucket.name}/o/${encodeURIComponent(file.name)}?alt=media`;
 
-const getSignedReadUrl = async (file) => {
-  try {
-    const [url] = await file.getSignedUrl({
-      action: "read",
-      expires: Date.now() + SIGNED_URL_TTL_MS,
-    });
-    return url;
-  } catch (error) {
-    if (!isFunctionsEmulator() || error?.name !== "SigningError") {
-      throw error;
-    }
+const parseResponsiveWidths = (value = "") =>
+  [...new Set(String(value).split(",").map((item) => Number(item.trim())))]
+    .filter((width) => Number.isInteger(width) && width > 0)
+    .sort((left, right) => left - right);
 
-    return getFirebaseStorageDownloadUrl(file);
+const getResponsiveWidthsFromMetadata = (metadata = {}) =>
+  parseResponsiveWidths(metadata?.[RESPONSIVE_WIDTHS_METADATA_KEY]);
+
+const getDerivativeWidthFromPath = (fileName = "") => {
+  const match = fileName.match(/\/(\d+)\.webp$/i);
+  return match ? Number(match[1]) : null;
+};
+
+const saveResponsiveWidthsMetadata = async (
+  originalFile,
+  existingMetadata,
+  responsiveWidths,
+) => {
+  const nextWidths = parseResponsiveWidths(responsiveWidths.join(","));
+  const currentWidths = getResponsiveWidthsFromMetadata(existingMetadata?.metadata);
+
+  if (
+    nextWidths.length === currentWidths.length &&
+    nextWidths.every((width, index) => width === currentWidths[index])
+  ) {
+    return;
   }
+
+  await originalFile.setMetadata({
+    metadata: {
+      ...(existingMetadata?.metadata || {}),
+      [RESPONSIVE_WIDTHS_METADATA_KEY]: nextWidths.join(","),
+    },
+  });
+};
+
+const getTargetWidths = (originalWidth) => {
+  if (!Number.isFinite(originalWidth) || originalWidth <= 0) {
+    return [...IMAGE_VARIANT_WIDTHS];
+  }
+
+  const matchingWidths = IMAGE_VARIANT_WIDTHS.filter(
+    (width) => width <= originalWidth,
+  );
+
+  return matchingWidths.length > 0 ? matchingWidths : [Math.round(originalWidth)];
 };
 
 const generateImageVariants = async (bucket, originalFile, contentType) => {
@@ -206,18 +237,13 @@ const generateImageVariants = async (bucket, originalFile, contentType) => {
   }
 
   const [sourceBuffer] = await originalFile.download();
+  const [existingMetadata] = await originalFile.getMetadata();
   const metadata = await sharp(sourceBuffer).metadata();
-  const originalWidth = metadata.width || Math.max(...IMAGE_VARIANT_WIDTHS);
-  const widths = IMAGE_VARIANT_WIDTHS.filter((width) => width <= originalWidth);
-  const targetWidths = widths.length > 0 ? widths : [IMAGE_VARIANT_WIDTHS[0]];
-  const generated = [];
+  const targetWidths = getTargetWidths(metadata.width);
 
   await Promise.all(
     targetWidths.map(async (width) => {
       const derivativeFile = bucket.file(getDerivativePath(fullName, width));
-      const [exists] = await derivativeFile.exists();
-      if (exists) return;
-
       const outputBuffer = await sharp(sourceBuffer)
         .rotate()
         .resize({ width, withoutEnlargement: true })
@@ -235,32 +261,63 @@ const generateImageVariants = async (bucket, originalFile, contentType) => {
         },
         resumable: false,
       });
-      generated.push(width);
     }),
   );
 
-  return { skipped: false, generated };
+  await saveResponsiveWidthsMetadata(
+    originalFile,
+    existingMetadata,
+    targetWidths,
+  );
+
+  return { skipped: false, generated: targetWidths };
 };
 
-const getResponsiveImageUrls = async (bucket, fullName) => {
-  const variants = await Promise.all(
-    IMAGE_VARIANT_WIDTHS.map(async (width) => {
-      const file = bucket.file(getDerivativePath(fullName, width));
-      const [exists] = await file.exists();
-      if (!exists) return null;
-      const url = await getSignedReadUrl(file);
-      return { width, url };
-    }),
-  );
+const getResponsiveWidths = async (bucket, file) => {
+  if (file.metadata?.metadata) {
+    const widths = getResponsiveWidthsFromMetadata(file.metadata.metadata);
+    if (widths.length > 0) return widths;
+  }
 
-  const existingVariants = variants.filter(Boolean);
-  if (existingVariants.length === 0) {
+  try {
+    const [metadata] = await file.getMetadata();
+    const widths = getResponsiveWidthsFromMetadata(metadata.metadata);
+    if (widths.length > 0) return widths;
+  } catch (error) {
+    console.warn("Unable to read responsive width metadata", {
+      fullName: file.name,
+      message: error.message,
+    });
+  }
+
+  const [derivativeFiles] = await bucket.getFiles({
+    prefix: getDerivativeFolder(file.name),
+    autoPaginate: true,
+  });
+
+  return derivativeFiles
+    .map((derivativeFile) => getDerivativeWidthFromPath(derivativeFile.name))
+    .filter((width) => Number.isInteger(width))
+    .sort((left, right) => left - right);
+};
+
+const getResponsiveImageUrls = async (bucket, file) => {
+  const responsiveWidths = await getResponsiveWidths(bucket, file);
+  if (responsiveWidths.length === 0) {
     return { thumbnailUrl: null, srcSet: "" };
   }
 
+  const variants = responsiveWidths.map((width) => {
+    const derivativeFile = bucket.file(getDerivativePath(file.name, width));
+    return {
+      width,
+      url: getPublicReadUrl(derivativeFile),
+    };
+  });
+
   return {
-    thumbnailUrl: existingVariants[0].url,
-    srcSet: existingVariants
+    thumbnailUrl: variants[0].url,
+    srcSet: variants
       .map(({ url, width }) => `${url} ${width}w`)
       .join(", "),
   };
@@ -646,12 +703,12 @@ exports.listMediaPaginated = onCall(async (request) => {
       files
         .filter((file) => isOriginalPhotoPath(file.name))
         .map(async (file) => {
-          const url = await getSignedReadUrl(file);
+          const url = getPublicReadUrl(file);
           const displayName = file.name.substring(PHOTOS_PREFIX.length);
           const responsiveUrls =
             isVideoFileName(file.name)
               ? { thumbnailUrl: null, srcSet: "" }
-              : await getResponsiveImageUrls(bucket, file.name);
+              : await getResponsiveImageUrls(bucket, file);
           return {
             name: displayName,
             url,
@@ -746,5 +803,42 @@ exports.generateMediaImageVariants = onObjectFinalized(
       generated: result.generated,
     });
     return result;
+  },
+);
+
+exports.backfillMediaImageVariants = onCall(
+  {
+    memory: "1GiB",
+    timeoutSeconds: 540,
+  },
+  async (request) => {
+    assertMediaAdmin(request);
+
+    const bucket = getStorage().bucket();
+    const [files] = await bucket.getFiles({
+      prefix: PHOTOS_PREFIX,
+      autoPaginate: true,
+    });
+    const photoFiles = files.filter((file) => isOriginalPhotoPath(file.name));
+    const results = [];
+
+    for (const file of photoFiles) {
+      const [metadata] = await file.getMetadata();
+      const result = await generateImageVariants(
+        bucket,
+        file,
+        metadata.contentType || "",
+      );
+      results.push({ fullName: file.name, ...result });
+    }
+
+    return {
+      processed: results.length,
+      generated: results.reduce(
+        (total, result) => total + result.generated.length,
+        0,
+      ),
+      skipped: results.filter((result) => result.skipped).length,
+    };
   },
 );
