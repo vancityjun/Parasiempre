@@ -95,10 +95,11 @@ const validateAttendeeUploadPermission = async (email) => {
     throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
   }
 
-  const snapshot = await rsvpCollection.get();
-  const attendee = snapshot.docs
-    .map((doc) => doc.data())
-    .find((data) => normalizeEmail(data.email) === normalizedEmail);
+  const snapshot = await rsvpCollection
+    .where("email", "==", normalizedEmail)
+    .limit(1)
+    .get();
+  const attendee = snapshot.empty ? null : snapshot.docs[0].data();
 
   if (!attendee || attendee.shownUp !== true) {
     throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
