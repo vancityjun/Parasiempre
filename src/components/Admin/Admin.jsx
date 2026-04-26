@@ -1,11 +1,20 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { getDocs, collection, query, orderBy } from "firebase/firestore";
-import { db, functions } from "../../firebase";
-import useSWR from "swr";
-import "./Admin.scss";
 import { httpsCallable } from "firebase/functions";
-import Button from "../Button";
+import useSWR from "swr";
+import { db, functions } from "../../firebase";
 import { useAuth } from "../../contexts/AuthContext";
+import AdminHeader from "./AdminHeader";
+import AttendanceSnapshot from "./AttendanceSnapshot";
+import GuestTable from "./GuestTable";
+import MediaSettingsPanel from "./MediaSettingsPanel";
+import OverviewStats from "./OverviewStats";
+import "./Admin.scss";
+
+const PUBLIC_UPLOAD = "public";
+const ATTENDEES_ONLY_UPLOAD = "attendeesOnly";
+const NATIVE_SAVE_BLOCKED = "blocked";
+const NATIVE_SAVE_ALLOWED = "allowed";
 
 const sendEmail = httpsCallable(functions, "sendConfirmationEmail");
 const toggleShowUp = httpsCallable(functions, "toggleShowUp");
@@ -13,197 +22,129 @@ const sendAfterEmail = httpsCallable(functions, "sendAfterEmail");
 const getMediaSettings = httpsCallable(functions, "getMediaSettings");
 const setMediaUploadMode = httpsCallable(functions, "setMediaUploadMode");
 const setNativeSaveMode = httpsCallable(functions, "setNativeSaveMode");
-const PUBLIC_UPLOAD = "public";
-const ATTENDEES_ONLY_UPLOAD = "attendeesOnly";
-const NATIVE_SAVE_BLOCKED = "blocked";
-const NATIVE_SAVE_ALLOWED = "allowed";
 
-const SettingToggle = ({
-  checked,
-  disabled,
-  label,
-  offText,
-  onText,
-  onChange,
-}) => (
-  <div className={`setting-toggle ${disabled ? "disabled" : ""}`}>
-    <span className="setting-toggle-label">{label}</span>
-    <button
-      type="button"
-      className={`toggle-switch ${checked ? "on" : ""}`}
-      role="switch"
-      aria-checked={checked}
-      disabled={disabled}
-      onClick={onChange}
-    >
-      <span className="toggle-thumb" />
-    </button>
-    <span className="setting-toggle-value">{checked ? onText : offText}</span>
-  </div>
-);
-
-const fetcher = async (path) => {
+const fetchRsvps = async (path) => {
   const rsvpCollection = collection(db, path);
   const ref = query(rsvpCollection, orderBy("timestamp", "desc"));
   const snapshot = await getDocs(ref);
   return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 };
 
-const mediaSettingsFetcher = async () => {
+const fetchMediaSettings = async () => {
   const result = await getMediaSettings();
   return result.data;
 };
 
+const getGuestSummary = (guests) =>
+  guests.reduce(
+    (summary, guest) => ({
+      totalGuests: summary.totalGuests + 1 + (guest.guestCount || 0),
+      householdCount: summary.householdCount + 1,
+      shownUpCount: summary.shownUpCount + (guest.shownUp ? 1 : 0),
+      confirmedCount:
+        summary.confirmedCount + (guest.confirmationEmailSent ? 1 : 0),
+    }),
+    {
+      totalGuests: 0,
+      householdCount: 0,
+      shownUpCount: 0,
+      confirmedCount: 0,
+    },
+  );
+
 const Admin = () => {
-  const { data, error, isLoading } = useSWR("rsvps", fetcher);
+  const { data, error, isLoading } = useSWR("rsvps", fetchRsvps);
   const {
     data: mediaSettings,
     error: mediaSettingsError,
     isLoading: isLoadingMediaSettings,
     mutate: mutateMediaSettings,
-  } = useSWR("media-settings", mediaSettingsFetcher);
+  } = useSWR("media-settings", fetchMediaSettings);
   const { logout } = useAuth();
+  const [sendingAfterEmail, setSendingAfterEmail] = useState(false);
 
-  const totalGuests = useMemo(() => {
-    if (!data) return 0;
-    return data.reduce((sum, guest) => sum + 1 + guest.guestCount, 0);
-  }, [data]);
+  const guests = useMemo(() => data || [], [data]);
+  const summary = useMemo(() => getGuestSummary(guests), [guests]);
+  const uploadRestricted =
+    mediaSettings?.uploadMode === ATTENDEES_ONLY_UPLOAD;
+  const nativeSaveBlocked =
+    mediaSettings?.nativeSaveMode !== NATIVE_SAVE_ALLOWED;
+
+  const updateMediaSettings = async (settings) => {
+    await mutateMediaSettings(
+      { ...(mediaSettings || {}), ...settings },
+      { revalidate: false },
+    );
+  };
+
+  const handleAfterEmail = async () => {
+    try {
+      setSendingAfterEmail(true);
+      await sendAfterEmail();
+    } catch (sendError) {
+      console.error(sendError);
+    } finally {
+      setSendingAfterEmail(false);
+    }
+  };
+
+  const handleUploadModeToggle = async () => {
+    const uploadMode = uploadRestricted ? PUBLIC_UPLOAD : ATTENDEES_ONLY_UPLOAD;
+    await setMediaUploadMode({ mode: uploadMode });
+    updateMediaSettings({ uploadMode });
+  };
+
+  const handleNativeSaveToggle = async () => {
+    const nativeSaveMode = nativeSaveBlocked
+      ? NATIVE_SAVE_ALLOWED
+      : NATIVE_SAVE_BLOCKED;
+    await setNativeSaveMode({ mode: nativeSaveMode });
+    updateMediaSettings({ nativeSaveMode });
+  };
+
+  const handleSendEmail = async (guest) => {
+    try {
+      const result = await sendEmail(guest);
+      console.log(result.data.message);
+    } catch (sendError) {
+      console.error("Error: ", sendError.message);
+    }
+  };
 
   if (mediaSettingsError) {
-    return (
-      <div>Failed to load media settings: {mediaSettingsError.message}</div>
-    );
+    return <div>Failed to load media settings: {mediaSettingsError.message}</div>;
   }
 
   return (
     <div className="admin">
-      <Button title="Log out" onClick={logout} />
-      <p className="total">Guest total: {totalGuests}</p>
-      <div className="media-settings">
-        <h2>Media Settings</h2>
-        <SettingToggle
-          disabled={isLoadingMediaSettings}
-          checked={mediaSettings?.uploadMode === ATTENDEES_ONLY_UPLOAD}
-          label="Upload permission"
-          offText="Anyone"
-          onText="Attendees only"
-          onChange={async () => {
-            const nextMode =
-              mediaSettings?.uploadMode === ATTENDEES_ONLY_UPLOAD
-                ? PUBLIC_UPLOAD
-                : ATTENDEES_ONLY_UPLOAD;
-            await setMediaUploadMode({ mode: nextMode });
-            mutateMediaSettings({
-              ...(mediaSettings || {}),
-              uploadMode: nextMode,
-            });
-          }}
+      <div className="admin-shell">
+        <AdminHeader
+          isSendingAfterEmail={sendingAfterEmail}
+          onLogout={logout}
+          onSendAfterEmail={handleAfterEmail}
         />
-        <SettingToggle
-          disabled={isLoadingMediaSettings}
-          checked={mediaSettings?.nativeSaveMode !== NATIVE_SAVE_ALLOWED}
-          label="Native save"
-          offText="Allowed"
-          onText="Blocked"
-          onChange={async () => {
-            const nextMode =
-              mediaSettings?.nativeSaveMode === NATIVE_SAVE_ALLOWED
-                ? NATIVE_SAVE_BLOCKED
-                : NATIVE_SAVE_ALLOWED;
-            await setNativeSaveMode({ mode: nextMode });
-            mutateMediaSettings({
-              ...(mediaSettings || {}),
-              nativeSaveMode: nextMode,
-            });
-          }}
+
+        <OverviewStats summary={summary} />
+
+        <div className="admin-secondary-grid">
+          <MediaSettingsPanel
+            isLoading={isLoadingMediaSettings}
+            nativeSaveBlocked={nativeSaveBlocked}
+            onNativeSaveToggle={handleNativeSaveToggle}
+            onUploadModeToggle={handleUploadModeToggle}
+            uploadRestricted={uploadRestricted}
+          />
+          <AttendanceSnapshot summary={summary} />
+        </div>
+
+        <GuestTable
+          error={error}
+          guests={guests}
+          isLoading={isLoading}
+          onSendEmail={handleSendEmail}
+          onToggleShowUp={toggleShowUp}
         />
       </div>
-      {error && <p>Failed to load RSVPs: {error.message}</p>}
-      {isLoading ? (
-        <div>Loading RSVPs...</div>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>First name</th>
-              <th>Last name</th>
-              <th>Email</th>
-              <th>Guest count</th>
-              <th>Answers</th>
-              <th>Confirmation Email Sent</th>
-              <th>Shown up</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(data || []).map((guestData) => {
-              const {
-                id,
-                firstName,
-                lastName,
-                email,
-                guestCount,
-                questionnaireAnswers,
-                confirmationEmailSent,
-                shownUp,
-              } = guestData;
-              return (
-                <tr key={id}>
-                  <td>{firstName}</td>
-                  <td>{lastName}</td>
-                  <td>{email}</td>
-                  <td>{guestCount}</td>
-                  <td>
-                    <ul>
-                      {Object.entries(questionnaireAnswers || {}).map(
-                        ([key, answer]) => (
-                          <li key={key}>
-                            {key}: <b>{answer}</b>
-                          </li>
-                        ),
-                      )}
-                    </ul>
-                  </td>
-                  <td>
-                    {confirmationEmailSent ? (
-                      "done"
-                    ) : (
-                      <Button
-                        title="send confirmation email"
-                        onClick={async () => {
-                          try {
-                            const result = await sendEmail(guestData);
-                            console.log(result.data.message);
-                          } catch (error) {
-                            console.error("Error: ", error.message);
-                          }
-                        }}
-                      />
-                    )}
-                  </td>
-                  <td>
-                    <Button
-                      title={
-                        shownUp ? "Toggle not shown up" : "Toggle shown up"
-                      }
-                      onClick={() => toggleShowUp({ id, shownUp: !shownUp })}
-                    />
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      <Button
-        title="Send After Email"
-        onClick={async () => {
-          try {
-            await sendAfterEmail();
-          } catch (error) {
-            console.error(error);
-          }
-        }}
-      />
     </div>
   );
 };
