@@ -1,6 +1,5 @@
 // Import the functions you need from the SDKs you need
 import { initializeApp } from "firebase/app";
-import { getAnalytics } from "firebase/analytics";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
@@ -25,8 +24,18 @@ const firebaseConfig = {
 
 // Initialize Firebase
 export const app = initializeApp(firebaseConfig);
-// eslint-disable-next-line no-unused-vars
-const analytics = getAnalytics(app);
+
+if (import.meta.env.PROD) {
+  import("firebase/analytics")
+    .then(({ getAnalytics, isSupported }) =>
+      isSupported().then((supported) => {
+        if (supported) getAnalytics(app);
+      }),
+    )
+    .catch((error) => {
+      console.warn("Firebase Analytics is unavailable:", error);
+    });
+}
 
 export const db = getFirestore(app);
 export const auth = getAuth(app);
