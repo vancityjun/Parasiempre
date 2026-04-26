@@ -65,9 +65,13 @@ const MediaGridDisplay = ({
               />
             ) : (
               <img
-                src={item.url}
+                src={item.thumbnailUrl || item.url}
+                srcSet={item.srcSet || undefined}
+                sizes="(max-width: 600px) 33vw, (max-width: 1024px) 30vw, 220px"
                 alt={`Photo ${item.name}`}
                 draggable="false"
+                loading="lazy"
+                decoding="async"
                 title={
                   nativeSaveBlocked ? undefined : "Press and hold to download"
                 }

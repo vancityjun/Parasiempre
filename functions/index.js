@@ -3,10 +3,12 @@ const { initializeApp } = require("firebase-admin/app");
 const { getFirestore } = require("firebase-admin/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onObjectFinalized } = require("firebase-functions/v2/storage");
 const Mailgun = require("mailgun.js").default;
 const FormData = require("form-data");
 const { getStorage } = require("firebase-admin/storage");
 const crypto = require("crypto");
+const sharp = require("sharp");
 // const { MAILGUN_API_KEY } = process.env;
 const COLLECTION = "rsvps";
 const MEDIA_SETTINGS_COLLECTION = "settings";
@@ -26,9 +28,12 @@ const DEFAULT_MEDIA_SETTINGS = {
 const MEDIA_PERMISSION_MESSAGE =
   "You don't have permission to upload image. Please contact admin: vancityjun@gmail.com";
 const PHOTOS_PREFIX = "photos/";
+const GENERATED_PHOTOS_PREFIX = "photos_resized/";
+const IMAGE_VARIANT_WIDTHS = [480, 960, 1440];
 const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_URLS_PER_REQUEST = 30;
 const DEFAULT_ADMIN_EMAILS = ["vancityjun@gmail.com"];
+const RESPONSIVE_WIDTHS_METADATA_KEY = "responsiveWidths";
 
 initializeApp();
 const db = getFirestore();
@@ -143,6 +148,193 @@ const getSafeFileName = (fileName = "media") => {
     .replace(/[^a-zA-Z0-9._ -]/g, "")
     .trim();
   return sanitized || "media";
+};
+
+const isVideoFileName = (fileName = "") => {
+  const videoExtensions = [".mp4", ".mov", ".webm", ".quicktime", ".mkv"];
+  return videoExtensions.some((ext) => fileName.toLowerCase().endsWith(ext));
+};
+
+const isOriginalPhotoPath = (fileName = "") =>
+  fileName.startsWith(PHOTOS_PREFIX) &&
+  fileName !== PHOTOS_PREFIX &&
+  !fileName.endsWith("/");
+
+const isSupportedImage = (contentType = "", fileName = "") => {
+  if (contentType === "image/gif") return false;
+  if (contentType.startsWith("image/")) return true;
+
+  return [".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".heic"].some(
+    (ext) => fileName.toLowerCase().endsWith(ext),
+  );
+};
+
+const getDerivativeFolder = (fullName) =>
+  `${GENERATED_PHOTOS_PREFIX}${encodeURIComponent(fullName)}/`;
+
+const getDerivativePath = (fullName, width) =>
+  `${getDerivativeFolder(fullName)}${width}.webp`;
+
+const getPublicReadUrl = (file) =>
+  `https://firebasestorage.googleapis.com/v0/b/${file.bucket.name}/o/${encodeURIComponent(file.name)}?alt=media`;
+
+const parseResponsiveWidths = (value = "") =>
+  [...new Set(String(value).split(",").map((item) => Number(item.trim())))]
+    .filter((width) => Number.isInteger(width) && width > 0)
+    .sort((left, right) => left - right);
+
+const getResponsiveWidthsFromMetadata = (metadata = {}) =>
+  parseResponsiveWidths(metadata?.[RESPONSIVE_WIDTHS_METADATA_KEY]);
+
+const getDerivativeWidthFromPath = (fileName = "") => {
+  const match = fileName.match(/\/(\d+)\.webp$/i);
+  return match ? Number(match[1]) : null;
+};
+
+const saveResponsiveWidthsMetadata = async (
+  originalFile,
+  existingMetadata,
+  responsiveWidths,
+) => {
+  const nextWidths = parseResponsiveWidths(responsiveWidths.join(","));
+  const currentWidths = getResponsiveWidthsFromMetadata(existingMetadata?.metadata);
+
+  if (
+    nextWidths.length === currentWidths.length &&
+    nextWidths.every((width, index) => width === currentWidths[index])
+  ) {
+    return;
+  }
+
+  await originalFile.setMetadata({
+    metadata: {
+      ...(existingMetadata?.metadata || {}),
+      [RESPONSIVE_WIDTHS_METADATA_KEY]: nextWidths.join(","),
+    },
+  });
+};
+
+const getTargetWidths = (originalWidth) => {
+  if (!Number.isFinite(originalWidth) || originalWidth <= 0) {
+    return [...IMAGE_VARIANT_WIDTHS];
+  }
+
+  const matchingWidths = IMAGE_VARIANT_WIDTHS.filter(
+    (width) => width <= originalWidth,
+  );
+
+  return matchingWidths.length > 0 ? matchingWidths : [Math.round(originalWidth)];
+};
+
+const generateImageVariants = async (
+  bucket,
+  originalFile,
+  contentType,
+  existingMetadata = null,
+) => {
+  const fullName = originalFile.name;
+  if (
+    !isOriginalPhotoPath(fullName) ||
+    isVideoFileName(fullName) ||
+    !isSupportedImage(contentType, fullName)
+  ) {
+    return { skipped: true, generated: [] };
+  }
+
+  const metadataSnapshot =
+    existingMetadata || (await originalFile.getMetadata())[0];
+  const existingWidths = getResponsiveWidthsFromMetadata(
+    metadataSnapshot?.metadata,
+  );
+  if (existingWidths.length > 0) {
+    return { skipped: true, generated: [] };
+  }
+
+  const [sourceBuffer] = await originalFile.download();
+  const metadata = await sharp(sourceBuffer).metadata();
+  const targetWidths = getTargetWidths(metadata.width);
+  const basePipeline = sharp(sourceBuffer).rotate();
+
+  await Promise.all(
+    targetWidths.map(async (width) => {
+      const derivativeFile = bucket.file(getDerivativePath(fullName, width));
+      const outputBuffer = await basePipeline
+        .clone()
+        .resize({ width, withoutEnlargement: true })
+        .webp({ quality: 78 })
+        .toBuffer();
+
+      await derivativeFile.save(outputBuffer, {
+        metadata: {
+          contentType: "image/webp",
+          cacheControl: "public, max-age=31536000, immutable",
+          metadata: {
+            originalFullName: fullName,
+            generatedWidth: String(width),
+          },
+        },
+        resumable: false,
+      });
+    }),
+  );
+
+  await saveResponsiveWidthsMetadata(
+    originalFile,
+    metadataSnapshot,
+    targetWidths,
+  );
+
+  return { skipped: false, generated: targetWidths };
+};
+
+const getResponsiveWidths = async (bucket, file) => {
+  if (file.metadata?.metadata) {
+    const widths = getResponsiveWidthsFromMetadata(file.metadata.metadata);
+    if (widths.length > 0) return widths;
+  }
+
+  try {
+    const [metadata] = await file.getMetadata();
+    const widths = getResponsiveWidthsFromMetadata(metadata.metadata);
+    if (widths.length > 0) return widths;
+  } catch (error) {
+    console.warn("Unable to read responsive width metadata", {
+      fullName: file.name,
+      message: error.message,
+    });
+  }
+
+  const [derivativeFiles] = await bucket.getFiles({
+    prefix: getDerivativeFolder(file.name),
+    autoPaginate: true,
+  });
+
+  return derivativeFiles
+    .map((derivativeFile) => getDerivativeWidthFromPath(derivativeFile.name))
+    .filter((width) => Number.isInteger(width))
+    .sort((left, right) => left - right);
+};
+
+const getResponsiveImageUrls = async (bucket, file) => {
+  const responsiveWidths = await getResponsiveWidths(bucket, file);
+  if (responsiveWidths.length === 0) {
+    return { thumbnailUrl: null, srcSet: "" };
+  }
+
+  const variants = responsiveWidths.map((width) => {
+    const derivativeFile = bucket.file(getDerivativePath(file.name, width));
+    return {
+      width,
+      url: getPublicReadUrl(derivativeFile),
+    };
+  });
+
+  return {
+    thumbnailUrl: variants[0].url,
+    srcSet: variants
+      .map(({ url, width }) => `${url} ${width}w`)
+      .join(", "),
+  };
 };
 
 exports.addRSVP = onCall(async (request) => {
@@ -513,10 +705,9 @@ exports.listMediaPaginated = onCall(async (request) => {
       ? request.data.pageSize
       : 9;
   const pageToken = request.data.pageToken || undefined;
-  const prefix = "photos/";
   try {
     const [files, nextQuery] = await bucket.getFiles({
-      prefix: prefix,
+      prefix: PHOTOS_PREFIX,
       maxResults: pageSize,
       pageToken: pageToken,
       autoPaginate: false,
@@ -524,17 +715,21 @@ exports.listMediaPaginated = onCall(async (request) => {
 
     const itemsWithUrls = await Promise.all(
       files
-        .filter((file) => file.name !== prefix && !file.name.endsWith("/")) // Filter out the prefix folder itself and any sub-folder objects
+        .filter((file) => isOriginalPhotoPath(file.name))
         .map(async (file) => {
-          // Generate a signed URL for each file. These URLs have an expiration.
-          // Ensure your service account has "Storage Object Viewer" role or similar.
-          const [url] = await file.getSignedUrl({
-            action: "read",
-            expires: Date.now() + 15 * 60 * 1000, // URL expires in 15 minutes
-          });
-          // Get name relative to prefix for display, but keep full name for unique key
-          const displayName = file.name.substring(prefix.length);
-          return { name: displayName, url, fullName: file.name };
+          const url = getPublicReadUrl(file);
+          const displayName = file.name.substring(PHOTOS_PREFIX.length);
+          const responsiveUrls =
+            isVideoFileName(file.name)
+              ? { thumbnailUrl: null, srcSet: "" }
+              : await getResponsiveImageUrls(bucket, file);
+          return {
+            name: displayName,
+            url,
+            fullName: file.name,
+            thumbnailUrl: responsiveUrls.thumbnailUrl,
+            srcSet: responsiveUrls.srcSet,
+          };
         }),
     );
 
@@ -577,8 +772,14 @@ exports.deleteMediaItem = onCall(async (request) => {
   try {
     const bucket = getStorage().bucket();
     const file = bucket.file(fullName);
+    const [derivativeFiles] = await bucket.getFiles({
+      prefix: getDerivativeFolder(fullName),
+    });
 
-    await file.delete();
+    await Promise.all([
+      file.delete(),
+      ...derivativeFiles.map((derivativeFile) => derivativeFile.delete()),
+    ]);
     console.log(`Successfully deleted ${fullName}`);
     return { success: true, message: `Successfully deleted ${fullName}` };
   } catch (error) {
@@ -590,3 +791,70 @@ exports.deleteMediaItem = onCall(async (request) => {
     );
   }
 });
+
+exports.generateMediaImageVariants = onObjectFinalized(
+  {
+    region: "us-west1",
+    memory: "1GiB",
+    timeoutSeconds: 300,
+  },
+  async (event) => {
+    const object = event.data;
+    const fullName = object.name;
+    if (!fullName) return null;
+
+    const bucket = getStorage().bucket(object.bucket);
+    const file = bucket.file(fullName);
+    const result = await generateImageVariants(
+      bucket,
+      file,
+      object.contentType || "",
+      object,
+    );
+
+    console.log("Image variant generation complete", {
+      fullName,
+      skipped: result.skipped,
+      generated: result.generated,
+    });
+    return result;
+  },
+);
+
+exports.backfillMediaImageVariants = onCall(
+  {
+    memory: "1GiB",
+    timeoutSeconds: 540,
+  },
+  async (request) => {
+    assertMediaAdmin(request);
+
+    const bucket = getStorage().bucket();
+    const [files] = await bucket.getFiles({
+      prefix: PHOTOS_PREFIX,
+      autoPaginate: true,
+    });
+    const photoFiles = files.filter((file) => isOriginalPhotoPath(file.name));
+    const results = [];
+
+    for (const file of photoFiles) {
+      const [metadata] = await file.getMetadata();
+      const result = await generateImageVariants(
+        bucket,
+        file,
+        metadata.contentType || "",
+        metadata,
+      );
+      results.push({ fullName: file.name, ...result });
+    }
+
+    return {
+      processed: results.length,
+      generated: results.reduce(
+        (total, result) => total + result.generated.length,
+        0,
+      ),
+      skipped: results.filter((result) => result.skipped).length,
+    };
+  },
+);
