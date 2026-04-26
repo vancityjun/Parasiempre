@@ -1,5 +1,20 @@
 [https://www.para-siempre.love/](https://www.para-siempre.love/)
 
+## Media Admin Notes
+
+Media setting changes now require either:
+
+1. A Firebase Auth custom claim: `admin: true`
+2. An allowed admin email in the Functions environment via `MEDIA_ADMIN_EMAILS`
+
+If `MEDIA_ADMIN_EMAILS` is not set, the backend falls back to `vancityjun@gmail.com`.
+
+Apply upload CORS separately on the bucket after updating `storage-cors.json`:
+
+```bash
+gcloud storage buckets update gs://parasiempre-4fa62.firebasestorage.app --cors-file=storage-cors.json
+```
+
 ## Local Firebase Functions
 
 To test callable functions before deployment while using the real Firestore

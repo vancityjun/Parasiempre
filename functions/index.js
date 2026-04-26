@@ -28,6 +28,7 @@ const MEDIA_PERMISSION_MESSAGE =
 const PHOTOS_PREFIX = "photos/";
 const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_URLS_PER_REQUEST = 30;
+const DEFAULT_ADMIN_EMAILS = ["vancityjun@gmail.com"];
 
 initializeApp();
 const db = getFirestore();
@@ -38,6 +39,15 @@ const mediaSettingsDoc = db
 let localMediaSettings = { ...DEFAULT_MEDIA_SETTINGS };
 
 const normalizeEmail = (email = "") => email.trim().toLowerCase();
+
+const MEDIA_ADMIN_EMAILS = (
+  process.env.MEDIA_ADMIN_EMAILS ||
+  process.env.ADMIN_EMAILS ||
+  DEFAULT_ADMIN_EMAILS.join(",")
+)
+  .split(",")
+  .map((email) => normalizeEmail(email))
+  .filter(Boolean);
 
 const isFunctionsEmulator = () =>
   process.env.FUNCTIONS_EMULATOR === "true" ||
@@ -89,17 +99,36 @@ const saveMediaSettings = async (settings) => {
   }
 };
 
+const assertMediaAdmin = (request) => {
+  if (!request.auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "The function must be called while authenticated.",
+    );
+  }
+
+  const normalizedAuthEmail = normalizeEmail(request.auth.token.email);
+  const hasAdminClaim = request.auth.token.admin === true;
+  const isAllowedAdminEmail = MEDIA_ADMIN_EMAILS.includes(normalizedAuthEmail);
+
+  if (!hasAdminClaim && !isAllowedAdminEmail) {
+    throw new HttpsError(
+      "permission-denied",
+      "The function must be called by an admin user.",
+    );
+  }
+};
+
 const validateAttendeeUploadPermission = async (email) => {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) {
     throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
   }
 
-  const snapshot = await rsvpCollection
-    .where("email", "==", normalizedEmail)
-    .limit(1)
-    .get();
-  const attendee = snapshot.empty ? null : snapshot.docs[0].data();
+  const snapshot = await rsvpCollection.get();
+  const attendee = snapshot.docs
+    .map((doc) => doc.data())
+    .find((data) => normalizeEmail(data.email) === normalizedEmail);
 
   if (!attendee || attendee.shownUp !== true) {
     throw new HttpsError("permission-denied", MEDIA_PERMISSION_MESSAGE);
@@ -126,9 +155,7 @@ exports.addRSVP = onCall(async (request) => {
     }
 
     // Check for duplicate email
-    const querySnapshot = await rsvpCollection
-      .where("email", "==", data.email)
-      .get();
+    const querySnapshot = await rsvpCollection.where("email", "==", data.email).get();
     if (!querySnapshot.empty) {
       throw new HttpsError("already-exists", "Email already exists");
     }
@@ -372,12 +399,7 @@ exports.getMediaUploadMode = onCall(async () => {
 exports.getMediaSettings = onCall(async () => await getMediaSettings());
 
 exports.setMediaUploadMode = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError(
-      "unauthenticated",
-      "The function must be called while authenticated.",
-    );
-  }
+  assertMediaAdmin(request);
 
   const { mode } = request.data || {};
   if (!Object.values(MEDIA_UPLOAD_MODES).includes(mode)) {
@@ -389,12 +411,7 @@ exports.setMediaUploadMode = onCall(async (request) => {
 });
 
 exports.setNativeSaveMode = onCall(async (request) => {
-  if (!request.auth) {
-    throw new HttpsError(
-      "unauthenticated",
-      "The function must be called while authenticated.",
-    );
-  }
+  assertMediaAdmin(request);
 
   const { mode } = request.data || {};
   if (!Object.values(NATIVE_SAVE_MODES).includes(mode)) {
