@@ -2,12 +2,21 @@
 
 ## Media Admin Notes
 
-Media setting changes now require either:
+Any authenticated user can access the admin dashboard with write permissions by
+default.
 
-1. A Firebase Auth custom claim: `admin: true`
-2. An allowed admin email in the Functions environment via `MEDIA_ADMIN_EMAILS`
+For read-only testing, assign a Firebase Auth custom claim to that user:
 
-If `MEDIA_ADMIN_EMAILS` is not set, the backend falls back to `vancityjun@gmail.com`.
+- `adminRole: "readOnly"` or
+- `adminReadOnly: true`
+
+That claim keeps admin dashboard access but disables write actions and masks
+guest name/email in the UI.
+
+Read-only test account:
+
+- Email: `test_admin@para-siempre.love`
+- Password: shared out-of-band for test use only
 
 Apply upload CORS separately on the bucket after updating `storage-cors.json`:
 

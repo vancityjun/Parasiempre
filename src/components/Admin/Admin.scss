@@ -53,6 +53,18 @@
     line-height: 1.5;
   }
 
+  .admin-access-note {
+    margin: 12px 0 0;
+    display: inline-flex;
+    width: fit-content;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: #edf7fb;
+    color: #245268;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
   .admin-topbar-actions {
     display: flex;
     align-items: center;
@@ -369,6 +381,11 @@
     padding: 0 16px;
     font-size: 14px;
     font-weight: 600;
+
+    &:disabled {
+      opacity: 0.52;
+      cursor: not-allowed;
+    }
   }
 
   .admin-button-small {

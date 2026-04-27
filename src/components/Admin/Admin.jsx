@@ -53,6 +53,7 @@ const getGuestSummary = (guests) =>
   );
 
 const Admin = () => {
+  const { canWriteAdmin, isReadOnlyAdmin, logout } = useAuth();
   const { data, error, isLoading } = useSWR("rsvps", fetchRsvps);
   const {
     data: mediaSettings,
@@ -60,7 +61,6 @@ const Admin = () => {
     isLoading: isLoadingMediaSettings,
     mutate: mutateMediaSettings,
   } = useSWR("media-settings", fetchMediaSettings);
-  const { logout } = useAuth();
   const [sendingAfterEmail, setSendingAfterEmail] = useState(false);
 
   const guests = useMemo(() => data || [], [data]);
@@ -78,6 +78,8 @@ const Admin = () => {
   };
 
   const handleAfterEmail = async () => {
+    if (!canWriteAdmin) return;
+
     try {
       setSendingAfterEmail(true);
       await sendAfterEmail();
@@ -89,12 +91,16 @@ const Admin = () => {
   };
 
   const handleUploadModeToggle = async () => {
+    if (!canWriteAdmin) return;
+
     const uploadMode = uploadRestricted ? PUBLIC_UPLOAD : ATTENDEES_ONLY_UPLOAD;
     await setMediaUploadMode({ mode: uploadMode });
     updateMediaSettings({ uploadMode });
   };
 
   const handleNativeSaveToggle = async () => {
+    if (!canWriteAdmin) return;
+
     const nativeSaveMode = nativeSaveBlocked
       ? NATIVE_SAVE_ALLOWED
       : NATIVE_SAVE_BLOCKED;
@@ -103,6 +109,8 @@ const Admin = () => {
   };
 
   const handleSendEmail = async (guest) => {
+    if (!canWriteAdmin) return;
+
     try {
       const result = await sendEmail(guest);
       console.log(result.data.message);
@@ -119,6 +127,8 @@ const Admin = () => {
     <div className="admin">
       <div className="admin-shell">
         <AdminHeader
+          canWriteAdmin={canWriteAdmin}
+          isReadOnlyAdmin={isReadOnlyAdmin}
           isSendingAfterEmail={sendingAfterEmail}
           onLogout={logout}
           onSendAfterEmail={handleAfterEmail}
@@ -128,6 +138,7 @@ const Admin = () => {
 
         <div className="admin-secondary-grid">
           <MediaSettingsPanel
+            canWriteAdmin={canWriteAdmin}
             isLoading={isLoadingMediaSettings}
             nativeSaveBlocked={nativeSaveBlocked}
             onNativeSaveToggle={handleNativeSaveToggle}
@@ -138,9 +149,11 @@ const Admin = () => {
         </div>
 
         <GuestTable
+          canWriteAdmin={canWriteAdmin}
           error={error}
           guests={guests}
           isLoading={isLoading}
+          isReadOnlyAdmin={isReadOnlyAdmin}
           onSendEmail={handleSendEmail}
           onToggleShowUp={toggleShowUp}
         />

@@ -2,6 +2,25 @@ import { useState } from "react";
 import Button from "../Button";
 import PanelHeading from "./PanelHeading";
 
+const maskName = (value = "") => {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  return `${trimmed.charAt(0)}***`;
+};
+
+const maskEmail = (email = "") => {
+  const emailStr = String(email || "");
+  const [localPart = "", domain = ""] = emailStr.split("@");
+  if (!localPart || !domain) return emailStr;
+
+  if (localPart.length <= 3) {
+    return `${localPart.charAt(0)}***@${domain}`;
+  }
+
+  const suffixLength = Math.min(2, Math.max(localPart.length - 1, 1));
+  return `${localPart.charAt(0)}*****${localPart.slice(-suffixLength)}@${domain}`;
+};
+
 const GuestStatus = ({ shownUp }) => (
   <span className={`status-pill ${shownUp ? "is-positive" : ""}`}>
     {shownUp ? "Arrived" : "Not checked in"}
@@ -27,8 +46,10 @@ const AnswersDetail = ({ answers }) => (
 );
 
 const GuestRow = ({
+  canWriteAdmin,
   expanded,
   guest,
+  isReadOnlyAdmin,
   onAnswerToggle,
   onSendEmail,
   onToggleShowUp,
@@ -44,18 +65,21 @@ const GuestRow = ({
     shownUp,
   } = guest;
   const answers = Object.entries(questionnaireAnswers || {});
+  const displayFirstName = isReadOnlyAdmin ? maskName(firstName) : firstName;
+  const displayLastName = isReadOnlyAdmin ? maskName(lastName) : lastName;
+  const displayEmail = isReadOnlyAdmin ? maskEmail(email) : email;
 
   return (
     <>
       <tr>
         <td data-label="Guest">
           <div className="guest-name-cell">
-            <strong>{`${firstName} ${lastName}`.trim()}</strong>
+            <strong>{`${displayFirstName} ${displayLastName}`.trim()}</strong>
             <GuestStatus shownUp={shownUp} />
           </div>
         </td>
         <td className="guest-email-cell" data-label="Email">
-          {email}
+          {displayEmail}
         </td>
         <td data-label="Party size">
           <span className="count-badge">{1 + (guestCount || 0)}</span>
@@ -77,6 +101,7 @@ const GuestRow = ({
           ) : (
             <Button
               className="admin-button admin-button-secondary admin-button-small"
+              disabled={!canWriteAdmin}
               title="Send"
               onClick={() => onSendEmail(guest)}
             />
@@ -87,6 +112,7 @@ const GuestRow = ({
             className={`admin-button admin-button-small ${
               shownUp ? "admin-button-secondary" : "admin-button-primary"
             }`}
+            disabled={!canWriteAdmin}
             title={shownUp ? "Mark absent" : "Mark arrived"}
             onClick={() => onToggleShowUp({ id, shownUp: !shownUp })}
           />
@@ -98,9 +124,11 @@ const GuestRow = ({
 };
 
 const GuestTable = ({
+  canWriteAdmin,
   error,
   guests,
   isLoading,
+  isReadOnlyAdmin,
   onSendEmail,
   onToggleShowUp,
 }) => {
@@ -115,7 +143,11 @@ const GuestTable = ({
       <PanelHeading
         eyebrow="Guest list"
         title="RSVP records"
-        hint="Use the right side of each row for email and check-in actions."
+        hint={
+          canWriteAdmin
+            ? "Use the right side of each row for email and check-in actions."
+            : "Review RSVPs in read-only mode. Email and check-in actions are disabled."
+        }
       />
 
       {error && (
@@ -139,8 +171,10 @@ const GuestTable = ({
             <tbody>
               {guests.map((guest) => (
                 <GuestRow
+                  canWriteAdmin={canWriteAdmin}
                   expanded={expandedGuestId === guest.id}
                   guest={guest}
+                  isReadOnlyAdmin={isReadOnlyAdmin}
                   key={guest.id}
                   onAnswerToggle={toggleAnswers}
                   onSendEmail={onSendEmail}
