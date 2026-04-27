@@ -3,14 +3,15 @@ import Button from "../Button";
 import PanelHeading from "./PanelHeading";
 
 const maskName = (value = "") => {
-  const trimmed = value.trim();
+  const trimmed = String(value || "").trim();
   if (!trimmed) return "";
   return `${trimmed.charAt(0)}***`;
 };
 
 const maskEmail = (email = "") => {
-  const [localPart = "", domain = ""] = email.split("@");
-  if (!localPart || !domain) return email;
+  const emailStr = String(email || "");
+  const [localPart = "", domain = ""] = emailStr.split("@");
+  if (!localPart || !domain) return emailStr;
 
   if (localPart.length <= 3) {
     return `${localPart.charAt(0)}***@${domain}`;
