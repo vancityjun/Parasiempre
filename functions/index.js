@@ -32,7 +32,6 @@ const GENERATED_PHOTOS_PREFIX = "photos_resized/";
 const IMAGE_VARIANT_WIDTHS = [480, 960, 1440];
 const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
 const MAX_UPLOAD_URLS_PER_REQUEST = 30;
-const DEFAULT_ADMIN_EMAILS = ["vancityjun@gmail.com"];
 const RESPONSIVE_WIDTHS_METADATA_KEY = "responsiveWidths";
 
 initializeApp();
@@ -44,15 +43,6 @@ const mediaSettingsDoc = db
 let localMediaSettings = { ...DEFAULT_MEDIA_SETTINGS };
 
 const normalizeEmail = (email = "") => email.trim().toLowerCase();
-
-const MEDIA_ADMIN_EMAILS = (
-  process.env.MEDIA_ADMIN_EMAILS ||
-  process.env.ADMIN_EMAILS ||
-  DEFAULT_ADMIN_EMAILS.join(",")
-)
-  .split(",")
-  .map((email) => normalizeEmail(email))
-  .filter(Boolean);
 
 const isFunctionsEmulator = () =>
   process.env.FUNCTIONS_EMULATOR === "true" ||
@@ -112,14 +102,18 @@ const assertMediaAdmin = (request) => {
     );
   }
 
-  const normalizedAuthEmail = normalizeEmail(request.auth.token.email);
-  const hasAdminClaim = request.auth.token.admin === true;
-  const isAllowedAdminEmail = MEDIA_ADMIN_EMAILS.includes(normalizedAuthEmail);
+  const normalizedRole = String(request.auth.token.adminRole || "")
+    .trim()
+    .toLowerCase();
+  const isReadOnlyAdmin =
+    request.auth.token.adminReadOnly === true ||
+    normalizedRole === "readonly" ||
+    normalizedRole === "read-only";
 
-  if (!hasAdminClaim && !isAllowedAdminEmail) {
+  if (isReadOnlyAdmin) {
     throw new HttpsError(
       "permission-denied",
-      "The function must be called by an admin user.",
+      "The function must be called by a write-enabled admin user.",
     );
   }
 };
@@ -563,24 +557,39 @@ async function sendAfterMailToAll() {
   }
 }
 
-exports.sendReminderEmail = onCall(async () => await sendReminderEmailToAll());
-exports.sendAfterEmail = onCall(async () => await sendAfterMailToAll());
+exports.sendReminderEmail = onCall(async (request) => {
+  assertMediaAdmin(request);
+  return await sendReminderEmailToAll();
+});
+exports.sendAfterEmail = onCall(async (request) => {
+  assertMediaAdmin(request);
+  return await sendAfterMailToAll();
+});
 
 exports.sendConfirmationEmail = onCall(
-  async (request) =>
-    await sendEmail(
+  async (request) => {
+    assertMediaAdmin(request);
+
+    return await sendEmail(
       request.data,
       request.data.id,
       "Thank you for RSVP",
       "We've received your RSVP for our wedding. We're so excited to celebrate with you!",
       "rsvpConfirmation",
       { confirmationEmailSent: true },
-    ),
+    );
+  },
 );
 
 exports.toggleShowUp = onCall(
-  async ({ data: { shownUp, id } }) =>
-    await rsvpCollection.doc(id).update({ shownUp }),
+  async (request) => {
+    assertMediaAdmin(request);
+
+    const {
+      data: { shownUp, id },
+    } = request;
+    return await rsvpCollection.doc(id).update({ shownUp });
+  },
 );
 
 exports.getMediaUploadMode = onCall(async () => {

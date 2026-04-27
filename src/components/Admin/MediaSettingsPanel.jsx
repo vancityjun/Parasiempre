@@ -2,6 +2,7 @@ import PanelHeading from "./PanelHeading";
 import SettingToggle from "./SettingToggle";
 
 const MediaSettingsPanel = ({
+  canWriteAdmin,
   isLoading,
   nativeSaveBlocked,
   onNativeSaveToggle,
@@ -16,7 +17,7 @@ const MediaSettingsPanel = ({
     />
     <div className="media-settings">
       <SettingToggle
-        disabled={isLoading}
+        disabled={isLoading || !canWriteAdmin}
         checked={uploadRestricted}
         label="Upload permission"
         offText="Anyone"
@@ -24,7 +25,7 @@ const MediaSettingsPanel = ({
         onChange={onUploadModeToggle}
       />
       <SettingToggle
-        disabled={isLoading}
+        disabled={isLoading || !canWriteAdmin}
         checked={nativeSaveBlocked}
         label="Browser save"
         offText="Allowed"

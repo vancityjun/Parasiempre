@@ -78,16 +78,11 @@ This avoids per-request signed read URLs and per-variant existence checks in the
 
 ## Admin access
 
-Media admin mutations require one of:
+Any authenticated user is treated as a write-enabled admin by default.
 
-1. Firebase Auth custom claim `admin: true`
-2. An allowed email in `MEDIA_ADMIN_EMAILS`
-
-If `MEDIA_ADMIN_EMAILS` is not set, the backend falls back to:
-
-```text
-vancityjun@gmail.com
-```
+If a user has the Firebase Auth custom claim `adminRole: "readOnly"` or
+`adminReadOnly: true`, admin write callables reject that user while the
+frontend keeps dashboard access in read-only mode.
 
 ## Local development
 

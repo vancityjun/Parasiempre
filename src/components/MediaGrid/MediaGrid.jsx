@@ -21,7 +21,8 @@ const MediaGridDisplay = ({
   nextPageToken,
   isLoadingMore,
   onLoadMore,
-  currentUser,
+  canAccessAdmin,
+  canWriteAdmin,
   onDelete,
   onMediaClick,
   nativeSaveBlocked,
@@ -77,11 +78,13 @@ const MediaGridDisplay = ({
                 }
               />
             )}
-            {currentUser && (
+            {canAccessAdmin && (
               <button
                 className="delete-media-btn"
+                disabled={!canWriteAdmin}
                 onClick={(e) => {
                   e.stopPropagation(); // Prevent opening modal when deleting
+                  if (!canWriteAdmin) return;
                   onDelete(item.fullName);
                 }}
                 title="Delete Media"
@@ -115,7 +118,7 @@ const MediaGrid = ({ refreshKey }) => {
   const [nextPageToken, setNextPageToken] = useState(null);
   const [allMediaLoaded, setAllMediaLoaded] = useState(false);
   const navigate = useNavigate();
-  const { currentUser } = useAuth();
+  const { canAccessAdmin, canWriteAdmin } = useAuth();
   const [currentModalIndex, setCurrentModalIndex] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nativeSaveBlocked, setNativeSaveBlocked] = useState(true);
@@ -191,6 +194,8 @@ const MediaGrid = ({ refreshKey }) => {
   };
 
   const handleDeleteMedia = async (fullName) => {
+    if (!canWriteAdmin) return;
+
     // if (!window.confirm("Are you sure you want to delete this item?")) return;
     try {
       await deleteMediaItemCallable({ fullName });
@@ -245,7 +250,8 @@ const MediaGrid = ({ refreshKey }) => {
         nextPageToken={nextPageToken}
         isLoadingMore={isLoadingMore}
         onLoadMore={() => fetchMediaItems(false, nextPageToken)}
-        currentUser={currentUser}
+        canAccessAdmin={canAccessAdmin}
+        canWriteAdmin={canWriteAdmin}
         onDelete={handleDeleteMedia}
         onMediaClick={handleMediaClick}
         nativeSaveBlocked={nativeSaveBlocked}
