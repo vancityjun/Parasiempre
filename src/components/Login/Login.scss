@@ -2,6 +2,18 @@
   padding: 20px;
   max-width: 330px;
   margin: 70px auto 0;
+
+  .login-error {
+    margin: 0 0 16px;
+    padding: 12px 14px;
+    border-radius: 8px;
+    background: #fff1f2;
+    border: 1px solid #fecdd3;
+    color: #9f1239;
+    font-size: 14px;
+    text-align: center;
+  }
+
   button {
     margin-top: 50px;
   }

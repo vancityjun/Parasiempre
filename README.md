@@ -16,7 +16,7 @@ guest name/email in the UI.
 Read-only test account:
 
 - Email: `test_admin@para-siempre.love`
-- Password: `para-siempre`
+- Password: shared out-of-band for test use only
 
 Apply upload CORS separately on the bucket after updating `storage-cors.json`:
 

@@ -9,6 +9,7 @@ const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { login, currentUser } = useAuth();
   const navigate = useNavigate();
 
@@ -20,19 +21,24 @@ const Login = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     setError(null);
+    setIsSubmitting(true);
     try {
       await login(email, password);
     } catch (err) {
       console.log(err.message);
       setError("Invalid email or password");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   return (
     <div className="login">
       <h2>Login</h2>
-      {error && <p>{error}</p>}
+      {error && <p className="login-error">{error}</p>}
       <form onSubmit={handleSubmit}>
         <InputField
           title="Email"
@@ -49,9 +55,9 @@ const Login = () => {
           setVal={setPassword}
         />
         <Button
-          disabled={!(email && password)}
+          disabled={!(email && password) || isSubmitting}
           onClick={handleSubmit}
-          title="Login"
+          title={isSubmitting ? "Signing in..." : "Login"}
         />
       </form>
     </div>
