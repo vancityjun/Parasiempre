@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { functions } from "../../firebase";
 import { httpsCallable } from "firebase/functions";
 import "./MediaGrid.scss";
@@ -12,6 +12,9 @@ const deleteMediaItemCallable = httpsCallable(functions, "deleteMediaItem");
 const getMediaSettings = httpsCallable(functions, "getMediaSettings");
 const ITEMS_PER_LOAD = 9;
 const NATIVE_SAVE_BLOCKED = "blocked";
+const GALLERY_IMAGE_SIZES =
+  "(max-width: 600px) 33vw, (max-width: 1024px) 30vw, 220px";
+const MODAL_IMAGE_SIZES = "100vw";
 
 const MediaGridDisplay = ({
   isLoading,
@@ -22,12 +25,20 @@ const MediaGridDisplay = ({
   isLoadingMore,
   onLoadMore,
   showDeleteControls,
+  nativeSaveBlocked,
   onDelete,
   onMediaClick,
-  nativeSaveBlocked,
+  onMediaReady,
+  pendingDomItemNames,
 }) => {
   if (isLoading && mediaItems.length === 0) {
-    return <div className="status-message loading">Loading media...</div>;
+    return (
+      <div className="media-grid media-grid-loading" aria-label="Loading media">
+        {Array.from({ length: ITEMS_PER_LOAD }).map((_, index) => (
+          <div className="media-skeleton" key={index} />
+        ))}
+      </div>
+    );
   }
 
   if (!isLoading && mediaItems.length === 0) {
@@ -38,59 +49,77 @@ const MediaGridDisplay = ({
 
   return (
     <>
-      <div className="media-grid">
-        {mediaItems.map((item) => (
-          <div
-            key={item.fullName || item.name}
-            className={`media-item ${
-              nativeSaveBlocked ? "prevent-save" : ""
-            }`}
-            onClick={() => onMediaClick(item)}
-            onContextMenu={(e) => {
-              if (nativeSaveBlocked) e.preventDefault();
-            }}
-          >
-            {isVideo(item.name) ? (
-              <video
-                src={item.url}
-                autoPlay
-                muted
-                loop
-                playsInline
-                draggable="false"
-                alt={`Video ${item.name}`}
-                title={
-                  nativeSaveBlocked ? undefined : "Press and hold to download"
-                }
-              />
-            ) : (
-              <img
-                src={item.thumbnailUrl || item.url}
-                srcSet={item.srcSet || undefined}
-                sizes="(max-width: 600px) 33vw, (max-width: 1024px) 30vw, 220px"
-                alt={`Photo ${item.name}`}
-                draggable="false"
-                loading="lazy"
-                decoding="async"
-                title={
-                  nativeSaveBlocked ? undefined : "Press and hold to download"
-                }
-              />
-            )}
-            {showDeleteControls && (
-              <button
-                className="delete-media-btn"
-                onClick={(e) => {
-                  e.stopPropagation(); // Prevent opening modal when deleting
-                  onDelete(item.fullName);
-                }}
-                title="Delete Media"
-              >
-                &times;
-              </button>
-            )}
+      <div className="media-grid-shell">
+        {(isLoading || isLoadingMore) && (
+          <div className="media-grid-overlay" aria-live="polite">
+            <div className="media-grid-spinner" />
           </div>
-        ))}
+        )}
+        <div className="media-grid">
+          {mediaItems.map((item) => {
+            const shouldPrioritizeLoading = pendingDomItemNames.includes(
+              item.fullName,
+            );
+
+            return (
+              <div
+                key={item.fullName || item.name}
+                className={`media-item ${
+                  nativeSaveBlocked ? "prevent-save" : ""
+                }`}
+                onClick={() => onMediaClick(item)}
+                onContextMenu={(e) => {
+                  if (nativeSaveBlocked) e.preventDefault();
+                }}
+              >
+                {isVideo(item.name) ? (
+                  <video
+                    src={item.url}
+                    autoPlay
+                    muted
+                    loop
+                    playsInline
+                    preload={shouldPrioritizeLoading ? "auto" : "metadata"}
+                    draggable="false"
+                    alt={`Video ${item.name}`}
+                    title={
+                      nativeSaveBlocked ? undefined : "Press and hold to download"
+                    }
+                    onLoadedData={() => onMediaReady(item.fullName)}
+                    onError={() => onMediaReady(item.fullName)}
+                  />
+                ) : (
+                  <img
+                    src={item.thumbnailUrl || item.url}
+                    srcSet={item.srcSet || undefined}
+                    sizes={GALLERY_IMAGE_SIZES}
+                    alt={`Photo ${item.name}`}
+                    draggable="false"
+                    loading={shouldPrioritizeLoading ? "eager" : "lazy"}
+                    decoding="async"
+                    title={
+                      nativeSaveBlocked ? undefined : "Press and hold to download"
+                    }
+                    onLoad={() => onMediaReady(item.fullName)}
+                    onError={() => onMediaReady(item.fullName)}
+                  />
+                )}
+                {showDeleteControls && (
+                  <button
+                    className="delete-media-btn"
+                    onClick={(e) => {
+                      e.stopPropagation(); // Prevent opening modal when deleting
+                      onDelete(item.fullName);
+                    }}
+                    title="Delete Media"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
       {!allMediaLoaded && nextPageToken && (
         <div className="load-more-container">
@@ -119,11 +148,17 @@ const MediaGrid = ({ refreshKey }) => {
   const [currentModalIndex, setCurrentModalIndex] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nativeSaveBlocked, setNativeSaveBlocked] = useState(true);
+  const [pendingDomItemNames, setPendingDomItemNames] = useState([]);
+  const preloadedModalImagesRef = useRef(new Set());
+  const pendingRenderedItemsRef = useRef(new Set());
+  const pendingRenderedPhaseRef = useRef(null);
 
   useEffect(() => {
     setMediaItems([]);
     setNextPageToken(null);
     setAllMediaLoaded(false);
+    setPendingDomItemNames([]);
+    preloadedModalImagesRef.current.clear();
     fetchMediaItems(true); // true for initial load
   }, [refreshKey]);
 
@@ -141,6 +176,78 @@ const MediaGrid = ({ refreshKey }) => {
 
     fetchMediaSettings();
   }, []);
+
+  const preloadModalImages = (items) => {
+    if (typeof window === "undefined") return;
+
+    const preload = () => {
+      items.forEach((item) => {
+        if (
+          isVideo(item.name) ||
+          preloadedModalImagesRef.current.has(item.fullName)
+        ) {
+          return;
+        }
+
+        const preloadSrc = item.thumbnailUrl || item.url;
+        if (!preloadSrc) return;
+
+        preloadedModalImagesRef.current.add(item.fullName);
+        const image = new Image();
+        image.decoding = "async";
+        image.sizes = MODAL_IMAGE_SIZES;
+        if (item.srcSet) image.srcset = item.srcSet;
+        image.src = preloadSrc;
+      });
+    };
+
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(preload, { timeout: 1500 });
+    } else {
+      window.setTimeout(preload, 0);
+    }
+  };
+
+  const setLoadingState = (phase, value) => {
+    if (phase === "initial") {
+      setIsLoading(value);
+      return;
+    }
+
+    if (phase === "more") {
+      setIsLoadingMore(value);
+    }
+  };
+
+  const beginPendingRenderedBatch = (items, phase) => {
+    const pendingItems = items
+      .filter((item) => item.fullName)
+      .map((item) => item.fullName);
+
+    pendingRenderedItemsRef.current = new Set(pendingItems);
+    pendingRenderedPhaseRef.current = phase;
+    setPendingDomItemNames(pendingItems);
+
+    if (pendingItems.length === 0) {
+      pendingRenderedPhaseRef.current = null;
+      setPendingDomItemNames([]);
+      setLoadingState(phase, false);
+    }
+  };
+
+  const handleMediaReady = (fullName) => {
+    if (!pendingRenderedItemsRef.current.has(fullName)) return;
+
+    pendingRenderedItemsRef.current.delete(fullName);
+    if (pendingRenderedItemsRef.current.size > 0) return;
+
+    const phase = pendingRenderedPhaseRef.current;
+    pendingRenderedPhaseRef.current = null;
+    setPendingDomItemNames([]);
+    if (phase) {
+      setLoadingState(phase, false);
+    }
+  };
 
   const fetchMediaItems = async (
     isInitialLoad = false,
@@ -162,6 +269,11 @@ const MediaGrid = ({ refreshKey }) => {
       });
 
       const newItemsWithUrls = result.data.mediaItems;
+      preloadModalImages(newItemsWithUrls);
+      beginPendingRenderedBatch(
+        newItemsWithUrls,
+        isInitialLoad ? "initial" : "more",
+      );
 
       setMediaItems((prevItems) =>
         isInitialLoad ? newItemsWithUrls : [...prevItems, ...newItemsWithUrls],
@@ -176,12 +288,10 @@ const MediaGrid = ({ refreshKey }) => {
       }
     } catch (err) {
       console.error("Error fetching media:", err);
-    } finally {
-      if (isInitialLoad) {
-        setIsLoading(false);
-      } else {
-        setIsLoadingMore(false);
-      }
+      pendingRenderedItemsRef.current.clear();
+      pendingRenderedPhaseRef.current = null;
+      setPendingDomItemNames([]);
+      setLoadingState(isInitialLoad ? "initial" : "more", false);
     }
   };
 
@@ -248,15 +358,12 @@ const MediaGrid = ({ refreshKey }) => {
         isLoadingMore={isLoadingMore}
         onLoadMore={() => fetchMediaItems(false, nextPageToken)}
         showDeleteControls={canWriteAdmin}
+        nativeSaveBlocked={nativeSaveBlocked}
         onDelete={handleDeleteMedia}
         onMediaClick={handleMediaClick}
-        nativeSaveBlocked={nativeSaveBlocked}
+        onMediaReady={handleMediaReady}
+        pendingDomItemNames={pendingDomItemNames}
       />
-      {!nativeSaveBlocked && (
-        <p className="media-grid-instruction">
-          Press and hold an image or video to download.
-        </p>
-      )}
       <Button
         title="Share your media"
         onClick={() => {
@@ -272,7 +379,7 @@ const MediaGrid = ({ refreshKey }) => {
           onNext={handleNextMedia}
           onPrev={handlePrevMedia}
           isVideo={isVideo}
-          nativeSaveBlocked={nativeSaveBlocked}
+          canDownloadOriginal={!nativeSaveBlocked}
         />
       )}
     </div>

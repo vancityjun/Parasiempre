@@ -2,11 +2,30 @@
   text-align: center;
   margin-bottom: 70px;
 
-  .media-grid-instruction {
-    font-size: 1em;
-    color: #555;
-    margin-bottom: 20px;
-    font-style: italic;
+  .media-grid-shell {
+    position: relative;
+  }
+
+  .media-grid-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 12px;
+    background: rgba(236, 251, 255, 0.58);
+    backdrop-filter: blur(2px);
+    pointer-events: none;
+  }
+
+  .media-grid-spinner {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 3px solid rgba(19, 47, 61, 0.16);
+    border-top-color: #2e88a8;
+    animation: media-grid-spin 0.8s linear infinite;
   }
 
   .media-grid {
@@ -18,12 +37,27 @@
     gap: 10px;
     margin-bottom: 20px;
 
+    &.media-grid-loading {
+      min-height: 300px;
+      place-items: center;
+    }
+
+    .media-skeleton {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 3px solid rgba(19, 47, 61, 0.16);
+      border-top-color: #2e88a8;
+      animation: media-grid-spin 0.8s linear infinite;
+    }
+
     .media-item {
       position: relative;
       width: 100%;
       padding-top: 100%; // Creates a square aspect ratio for the container
       overflow: hidden;
       border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 
       img,
@@ -92,5 +126,11 @@
   .load-more-container {
     margin-top: 20px;
     margin-bottom: 20px;
+  }
+}
+
+@keyframes media-grid-spin {
+  to {
+    transform: rotate(360deg);
   }
 }

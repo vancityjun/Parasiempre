@@ -13,7 +13,7 @@ const MediaSettingsPanel = ({
     <PanelHeading
       eyebrow="Media controls"
       title="Gallery settings"
-      hint="Public viewing stays on. These switches only affect who can upload and whether obvious browser save options are hidden."
+      hint="Public viewing stays on. These switches control who can upload and whether original downloads are available."
     />
     <div className="media-settings">
       <SettingToggle
@@ -27,7 +27,7 @@ const MediaSettingsPanel = ({
       <SettingToggle
         disabled={isLoading || !canWriteAdmin}
         checked={nativeSaveBlocked}
-        label="Browser save"
+        label="Downloads"
         offText="Allowed"
         onText="Blocked"
         onChange={onNativeSaveToggle}
