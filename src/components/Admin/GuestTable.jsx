@@ -49,7 +49,7 @@ const GuestRow = ({
   canWriteAdmin,
   expanded,
   guest,
-  isReadOnlyAdmin,
+  isTestAdmin,
   onAnswerToggle,
   onSendEmail,
   onToggleShowUp,
@@ -65,9 +65,9 @@ const GuestRow = ({
     shownUp,
   } = guest;
   const answers = Object.entries(questionnaireAnswers || {});
-  const displayFirstName = isReadOnlyAdmin ? maskName(firstName) : firstName;
-  const displayLastName = isReadOnlyAdmin ? maskName(lastName) : lastName;
-  const displayEmail = isReadOnlyAdmin ? maskEmail(email) : email;
+  const displayFirstName = isTestAdmin ? maskName(firstName) : firstName;
+  const displayLastName = isTestAdmin ? maskName(lastName) : lastName;
+  const displayEmail = isTestAdmin ? maskEmail(email) : email;
 
   return (
     <>
@@ -128,7 +128,7 @@ const GuestTable = ({
   error,
   guests,
   isLoading,
-  isReadOnlyAdmin,
+  isTestAdmin,
   onSendEmail,
   onToggleShowUp,
 }) => {
@@ -174,7 +174,7 @@ const GuestTable = ({
                   canWriteAdmin={canWriteAdmin}
                   expanded={expandedGuestId === guest.id}
                   guest={guest}
-                  isReadOnlyAdmin={isReadOnlyAdmin}
+                  isTestAdmin={isTestAdmin}
                   key={guest.id}
                   onAnswerToggle={toggleAnswers}
                   onSendEmail={onSendEmail}

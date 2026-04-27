@@ -115,7 +115,7 @@ const MediaGrid = ({ refreshKey }) => {
   const [nextPageToken, setNextPageToken] = useState(null);
   const [allMediaLoaded, setAllMediaLoaded] = useState(false);
   const navigate = useNavigate();
-  const { currentUser, isTestAdmin } = useAuth();
+  const { canWriteAdmin } = useAuth();
   const [currentModalIndex, setCurrentModalIndex] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nativeSaveBlocked, setNativeSaveBlocked] = useState(true);
@@ -191,7 +191,7 @@ const MediaGrid = ({ refreshKey }) => {
   };
 
   const handleDeleteMedia = async (fullName) => {
-    if (!currentUser || isTestAdmin) return;
+    if (!canWriteAdmin) return;
 
     // if (!window.confirm("Are you sure you want to delete this item?")) return;
     try {
@@ -247,7 +247,7 @@ const MediaGrid = ({ refreshKey }) => {
         nextPageToken={nextPageToken}
         isLoadingMore={isLoadingMore}
         onLoadMore={() => fetchMediaItems(false, nextPageToken)}
-        showDeleteControls={Boolean(currentUser && !isTestAdmin)}
+        showDeleteControls={canWriteAdmin}
         onDelete={handleDeleteMedia}
         onMediaClick={handleMediaClick}
         nativeSaveBlocked={nativeSaveBlocked}

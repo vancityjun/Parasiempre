@@ -1,4 +1,4 @@
-import { createContext, useState, useEffect, useContext } from "react";
+import { createContext, useState, useEffect, useContext, useMemo } from "react";
 import {
   signInWithEmailAndPassword,
   signOut,
@@ -54,17 +54,17 @@ export const AuthProvider = ({ children }) => {
 
   const canAccessAdmin = Boolean(currentUser);
   const canWriteAdmin = Boolean(currentUser) && !isTestAdmin;
-  const isReadOnlyAdmin = Boolean(currentUser) && isTestAdmin;
-
-  const value = {
-    canAccessAdmin,
-    canWriteAdmin,
-    currentUser,
-    isReadOnlyAdmin,
-    isTestAdmin,
-    login,
-    logout,
-  };
+  const value = useMemo(
+    () => ({
+      canAccessAdmin,
+      canWriteAdmin,
+      currentUser,
+      isTestAdmin,
+      login,
+      logout,
+    }),
+    [canAccessAdmin, canWriteAdmin, currentUser, isTestAdmin],
+  );
 
   return (
     <AuthContext.Provider value={value}>
