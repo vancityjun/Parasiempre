@@ -239,9 +239,6 @@ const MediaGrid = ({ refreshKey }) => {
     if (!pendingRenderedItemsRef.current.has(fullName)) return;
 
     pendingRenderedItemsRef.current.delete(fullName);
-    setPendingDomItemNames((currentItems) =>
-      currentItems.filter((itemName) => itemName !== fullName),
-    );
     if (pendingRenderedItemsRef.current.size > 0) return;
 
     const phase = pendingRenderedPhaseRef.current;
