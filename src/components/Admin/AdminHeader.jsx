@@ -2,7 +2,7 @@ import Button from "../Button";
 
 const AdminHeader = ({
   canWriteAdmin,
-  isReadOnlyAdmin,
+  isTestAdmin,
   isSendingAfterEmail,
   onLogout,
   onSendAfterEmail,
@@ -15,7 +15,7 @@ const AdminHeader = ({
         Review RSVPs, control gallery permissions, and send follow-up email from
         one place.
       </p>
-      {isReadOnlyAdmin && (
+      {isTestAdmin && (
         <p className="admin-access-note">
           Read-only testing mode. Guest names and emails are masked, and write
           actions are disabled.

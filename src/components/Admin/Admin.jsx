@@ -53,7 +53,7 @@ const getGuestSummary = (guests) =>
   );
 
 const Admin = () => {
-  const { canWriteAdmin, isReadOnlyAdmin, logout } = useAuth();
+  const { canWriteAdmin, isTestAdmin, logout } = useAuth();
   const { data, error, isLoading } = useSWR("rsvps", fetchRsvps);
   const {
     data: mediaSettings,
@@ -128,7 +128,7 @@ const Admin = () => {
       <div className="admin-shell">
         <AdminHeader
           canWriteAdmin={canWriteAdmin}
-          isReadOnlyAdmin={isReadOnlyAdmin}
+          isTestAdmin={isTestAdmin}
           isSendingAfterEmail={sendingAfterEmail}
           onLogout={logout}
           onSendAfterEmail={handleAfterEmail}
@@ -153,7 +153,7 @@ const Admin = () => {
           error={error}
           guests={guests}
           isLoading={isLoading}
-          isReadOnlyAdmin={isReadOnlyAdmin}
+          isTestAdmin={isTestAdmin}
           onSendEmail={handleSendEmail}
           onToggleShowUp={toggleShowUp}
         />
