@@ -31,6 +31,7 @@ const PHOTOS_PREFIX = "photos/";
 const GENERATED_PHOTOS_PREFIX = "photos_resized/";
 const IMAGE_VARIANT_WIDTHS = [480, 960, 1440];
 const SIGNED_UPLOAD_TTL_MS = 10 * 60 * 1000;
+const SIGNED_DOWNLOAD_TTL_MS = 5 * 60 * 1000;
 const MAX_UPLOAD_URLS_PER_REQUEST = 30;
 const RESPONSIVE_WIDTHS_METADATA_KEY = "responsiveWidths";
 
@@ -171,6 +172,12 @@ const getDerivativePath = (fullName, width) =>
 
 const getPublicReadUrl = (file) =>
   `https://firebasestorage.googleapis.com/v0/b/${file.bucket.name}/o/${encodeURIComponent(file.name)}?alt=media`;
+
+const getDownloadFileName = (fullName = "") =>
+  getSafeFileName(fullName.substring(PHOTOS_PREFIX.length) || "media");
+
+const getAttachmentDisposition = (fileName) =>
+  `attachment; filename="${fileName.replace(/"/g, "")}"`;
 
 const parseResponsiveWidths = (value = "") =>
   [...new Set(String(value).split(",").map((item) => Number(item.trim())))]
@@ -672,6 +679,28 @@ exports.createMediaUploadUrls = onCall(async (request) => {
   );
 
   return { mode: settings.uploadMode, uploads };
+});
+
+exports.createMediaDownloadUrl = onCall(async (request) => {
+  const { fullName } = request.data || {};
+  if (!fullName || typeof fullName !== "string" || !isOriginalPhotoPath(fullName)) {
+    throw new HttpsError("invalid-argument", "Invalid media path.");
+  }
+
+  const settings = await getMediaSettings();
+  if (settings.nativeSaveMode !== NATIVE_SAVE_MODES.ALLOWED) {
+    throw new HttpsError("permission-denied", "Downloads are disabled.");
+  }
+
+  const bucket = getStorage().bucket();
+  const file = bucket.file(fullName);
+  const [url] = await file.getSignedUrl({
+    action: "read",
+    expires: Date.now() + SIGNED_DOWNLOAD_TTL_MS,
+    responseDisposition: getAttachmentDisposition(getDownloadFileName(fullName)),
+  });
+
+  return { url };
 });
 
 // Trigger for new RSVP creation
