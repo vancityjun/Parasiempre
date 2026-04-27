@@ -5,9 +5,20 @@ import {
   onIdTokenChanged,
 } from "firebase/auth";
 import { auth } from "../firebase";
-import { ADMIN_ACCESS_LEVELS, getAdminAccess } from "../utils/adminAccess";
 
 const AuthContext = createContext();
+
+const isTestAdminClaim = (tokenClaims = {}) => {
+  const normalizedRole = String(tokenClaims.adminRole || "")
+    .trim()
+    .toLowerCase();
+
+  return (
+    tokenClaims.adminReadOnly === true ||
+    normalizedRole === "readonly" ||
+    normalizedRole === "read-only"
+  );
+};
 
 export const useAuth = () => {
   return useContext(AuthContext);
@@ -15,12 +26,7 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
-  const [adminAccess, setAdminAccess] = useState({
-    accessLevel: ADMIN_ACCESS_LEVELS.NONE,
-    canAccessAdmin: false,
-    canWriteAdmin: false,
-    isReadOnlyAdmin: false,
-  });
+  const [isTestAdmin, setIsTestAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const login = (email, password) =>
@@ -34,26 +40,28 @@ export const AuthProvider = ({ children }) => {
     const unsubscribe = onIdTokenChanged(auth, async (user) => {
       setCurrentUser(user);
       if (!user) {
-        setAdminAccess({
-          accessLevel: ADMIN_ACCESS_LEVELS.NONE,
-          canAccessAdmin: false,
-          canWriteAdmin: false,
-          isReadOnlyAdmin: false,
-        });
+        setIsTestAdmin(false);
         setLoading(false);
         return;
       }
 
       const tokenResult = await user.getIdTokenResult();
-      setAdminAccess(getAdminAccess(tokenResult.claims, true));
+      setIsTestAdmin(isTestAdminClaim(tokenResult.claims));
       setLoading(false);
     });
     return unsubscribe;
   }, []);
 
+  const canAccessAdmin = Boolean(currentUser);
+  const canWriteAdmin = Boolean(currentUser) && !isTestAdmin;
+  const isReadOnlyAdmin = Boolean(currentUser) && isTestAdmin;
+
   const value = {
-    ...adminAccess,
+    canAccessAdmin,
+    canWriteAdmin,
     currentUser,
+    isReadOnlyAdmin,
+    isTestAdmin,
     login,
     logout,
   };
